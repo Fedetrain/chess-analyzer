@@ -5,7 +5,7 @@ import math
 from typing import Dict, Optional, Tuple, Any, List
 from config import (
     BOARD_SIZE, SQUARE_SIZE, EVAL_BAR_WIDTH, EVAL_CAP,
-    DIRTY_RECT_ENABLED, COLORS, PANEL_X, SCREEN_HEIGHT
+    COLORS, PANEL_X, SCREEN_HEIGHT
 )
 
 class Drawing:
@@ -101,20 +101,45 @@ class Drawing:
 
         self.screen.blit(self.highlight_surf, (0,0))
 
-    def draw_eval_bar(self, analysis: Dict):
+    def draw_eval_bar(self, analysis, orientation: int = chess.WHITE):
+        """Draw the evaluation bar.
+
+        The score comes in already expressed from White's point of view
+        (``Analysis.score_white``). The previous implementation read a
+        side-to-move relative score and rendered it as if it were White's, so
+        the bar was inverted on every position with Black to move -- half the
+        game. Mates were also read as centipawns, so a mate in 3 drew a bar at
+        roughly equality.
+        """
         rect = pygame.Rect(BOARD_SIZE, 0, EVAL_BAR_WIDTH, BOARD_SIZE)
         self.mark_dirty(rect)
-        pygame.draw.rect(self.screen, (30,30,30), rect)
-        
-        val = analysis.get("evaluation", {}).get("value", 0)
-        # Clamp e visualizzazione
-        val = max(-EVAL_CAP, min(EVAL_CAP, val))
-        white_pct = 0.5 + (val / (2*EVAL_CAP))
-        h = int(BOARD_SIZE * white_pct)
-        
-        w_rect = pygame.Rect(BOARD_SIZE, BOARD_SIZE - h, EVAL_BAR_WIDTH, h)
-        pygame.draw.rect(self.screen, (240,240,240), w_rect)
-        pygame.draw.line(self.screen, (100,100,100), (BOARD_SIZE, BOARD_SIZE//2), (BOARD_SIZE+EVAL_BAR_WIDTH, BOARD_SIZE//2))
+        pygame.draw.rect(self.screen, COLORS.EVAL_BG, rect)
+
+        score = getattr(analysis, "score_white", 0)
+        mate_in = getattr(analysis, "mate_in", None)
+
+        if mate_in is not None:
+            white_share = 1.0 if mate_in > 0 else 0.0
+        else:
+            clamped = max(-EVAL_CAP, min(EVAL_CAP, score))
+            white_share = 0.5 + (clamped / (2 * EVAL_CAP))
+
+        white_height = int(BOARD_SIZE * white_share)
+        # The bar is drawn from whichever end the player's own colour sits at,
+        # so it stays intuitive after flipping the board.
+        if orientation == chess.WHITE:
+            white_rect = pygame.Rect(
+                BOARD_SIZE, BOARD_SIZE - white_height, EVAL_BAR_WIDTH, white_height
+            )
+        else:
+            white_rect = pygame.Rect(BOARD_SIZE, 0, EVAL_BAR_WIDTH, white_height)
+        pygame.draw.rect(self.screen, (240, 240, 240), white_rect)
+
+        pygame.draw.line(
+            self.screen, (100, 100, 100),
+            (BOARD_SIZE, BOARD_SIZE // 2),
+            (BOARD_SIZE + EVAL_BAR_WIDTH, BOARD_SIZE // 2),
+        )
 
     def draw_arrow(self, start: Tuple[int,int], end: Tuple[int,int], color):
         pygame.draw.line(self.arrow_surf, color, start, end, 6)
@@ -126,25 +151,28 @@ class Drawing:
         pygame.draw.polygon(self.arrow_surf, color, [end, p2, p3])
 
     def draw_best_move(self, orientation, analysis):
-        self.arrow_surf.fill((0,0,0,0))
-        if moves := analysis.get("top_moves"):
-            try:
-                m = chess.Move.from_uci(moves[0]['Move'])
-                r1 = self.get_rect(m.from_square, orientation)
-                r2 = self.get_rect(m.to_square, orientation)
-                self.draw_arrow(r1.center, r2.center, COLORS.FRECCIA_MIGLIORE)
-                self.mark_dirty(r1.union(r2))
-            except: pass
-        self.screen.blit(self.arrow_surf, (0,0))
+        self.arrow_surf.fill((0, 0, 0, 0))
+        best = getattr(analysis, "best", None)
+        if best is not None:
+            r1 = self.get_rect(best.move.from_square, orientation)
+            r2 = self.get_rect(best.move.to_square, orientation)
+            self.draw_arrow(r1.center, r2.center, COLORS.FRECCIA_MIGLIORE)
+            self.mark_dirty(r1.union(r2))
+        self.screen.blit(self.arrow_surf, (0, 0))
 
     def mark_dirty(self, r):
-        if DIRTY_RECT_ENABLED: self.dirty_rects.append(r)
+        """No-op hook kept for the partial-redraw path, which is not enabled.
+
+        The full redraw costs little at this board size and removes a whole
+        class of stale-pixel bugs, so the dirty-rect flag that used to gate this
+        has been deleted rather than left as dead configuration.
+        """
 
     def redraw_all(self, board, orientation, last_move, selected, dragging, analysis, ui):
         self.draw_board(orientation)
         self.draw_highlights(board, orientation, last_move, selected, dragging)
         self.draw_pieces(board, orientation, dragging, selected)
-        self.draw_eval_bar(analysis)
+        self.draw_eval_bar(analysis, orientation)
         self.draw_best_move(orientation, analysis)
         
         # UI Panel
@@ -156,8 +184,4 @@ class Drawing:
             self.screen.blit(dragging[0], dragging[1])
             self.mark_dirty(dragging[1])
 
-        if DIRTY_RECT_ENABLED and self.dirty_rects:
-            pygame.display.update(self.dirty_rects)
-            self.dirty_rects.clear()
-        else:
-            pygame.display.flip()
+        pygame.display.flip()

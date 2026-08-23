@@ -6,12 +6,15 @@ import threading
 from typing import Optional, Dict, Any, Tuple, List
 import time
 
+from analysis import Judgement, phase_of
+from coach import Coach
+from openings import get_book
 from config import (
-    SCREEN_WIDTH, SCREEN_HEIGHT, STOCKFISH_PATH, ASSET_PATH, 
+    SCREEN_WIDTH, SCREEN_HEIGHT, STOCKFISH_PATH, ASSET_PATH,
     BOARD_SIZE, SQUARE_SIZE, DEFAULT_ELO_INDEX, ELO_LEVELS,
-    PGN_PATH, LAZY_LOADING_ENABLED, COLORS
+    PGN_PATH, COLORS
 )
-from engine import EngineWrapper
+from engine import EMPTY_ANALYSIS, Analysis, EngineWrapper
 from drawing import Drawing
 from ui import UIManager
 from pgn_handler import PGNHandler
@@ -39,27 +42,22 @@ class AssetManager:
             self._loaded = True
         return self.piece_images
     
-    def preload_essential(self) -> None:
-        if LAZY_LOADING_ENABLED:
-            for piece in ['wK', 'bK']:
-                path = os.path.join(ASSET_PATH, f"{piece}.png")
-                if os.path.exists(path):
-                    self.piece_images[piece] = pygame.transform.smoothscale(
-                        pygame.image.load(path).convert_alpha(), (SQUARE_SIZE, SQUARE_SIZE)
-                    )
-
 class Game:
     def __init__(self):
         pygame.init()
         pygame.font.init()
-        pygame.mixer.init()
-        
+        try:
+            pygame.mixer.init()
+        except pygame.error:
+            # No audio device (CI, headless, locked device). Sound is optional;
+            # failing to open a mixer must never stop the app from starting.
+            pass
+
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-        pygame.display.set_caption("Gem Scacchi - AI Trainer")
-        
+        pygame.display.set_caption("Chess Analyzer")
+
         self.clock = pygame.time.Clock()
         self.asset_manager = AssetManager()
-        self.asset_manager.preload_essential()
         self.piece_images = self.asset_manager.load_piece_images()
         
         # Game State
@@ -71,39 +69,39 @@ class Game:
         self.player_color = chess.WHITE
         self.board_orientation = chess.WHITE
         self.last_move: Optional[chess.Move] = None
-        # Stato ELO interno del Game (DEVE essere aggiornato)
         self.current_elo = ELO_LEVELS[DEFAULT_ELO_INDEX]
         
-        # Analysis State (Nuova Struttura)
-        self.current_analysis: Dict[str, Any] = {}
-        self.last_move_info: Dict[str, Any] = {
-            "label": "", "color": COLORS.TESTO_SEC, 
-            "explanation": "Inizia la partita per ricevere consigli.", "loss": 0.0
-        }
-        
+        # Analysis state
+        self.current_analysis: Analysis = EMPTY_ANALYSIS
+        self.last_judgement: Optional[Judgement] = None
+        self.coach_text = "Play a move to get feedback."
+        self.accuracies: List[float] = []
+        self.phases: List[str] = []
+
         self.game_state = "loading"
-        self.status_text = "Caricamento Stockfish..."
+        self.status_text = "Starting engine..."
         
         # Components
         self.engine: Optional[EngineWrapper] = None
         self.drawing = Drawing(self.screen, self.piece_images)
         self.pgn_handler = PGNHandler()
-        self.chess_utils = ChessUtils()
-        
+        self.openings = get_book()
+        self.coach = Coach(book=self.openings)
+
         os.makedirs(PGN_PATH, exist_ok=True)
-        
+
         self.ui = UIManager()
-        # Sincronizza lo stato iniziale ELO della UI con quello del Game
         self.ui.current_elo = self.current_elo
-        
+
         self.engine_thread = threading.Thread(target=self.init_engine, args=(STOCKFISH_PATH,), daemon=True)
         self.engine_thread.start()
 
     def init_engine(self, path: Optional[str]) -> None:
-        self.engine = EngineWrapper(path)
-        self.engine.set_elo(self.current_elo)
-        self.piece_images = self.asset_manager.load_piece_images()
-        self.drawing.piece_images = self.piece_images
+        self.engine = EngineWrapper(path, elo=self.current_elo)
+        if not self.engine.is_ready:
+            self.game_state = "no_engine"
+            self.status_text = "No engine - set STOCKFISH_PATH"
+            return
         self.run_background_analysis()
 
     def run(self) -> None:
@@ -121,26 +119,45 @@ class Game:
                 if not ui_action and self.game_state == "human_turn":
                     self.handle_board_event(event)
             
-            # Update UI State
-            # ATTENZIONE: Rimosso current_elo da qui, la UI gestisce il proprio stato ELO visivo
-            self.ui.update_state(
-                game_state=self.game_state,
-                status_text=self.status_text,
-                last_move_info=self.last_move_info,
-                current_analysis=self.current_analysis,
-                history_len=len(self.board.move_stack),
-                player_color=self.player_color,
-                move_history_san=self.move_history_san,
-                current_fen=self.board.fen()
-            )
-
+            self.sync_ui()
             self.drawing.redraw_all(
                 self.board, self.board_orientation, self.last_move,
                 self.selected_square, self.dragging_piece,
                 self.current_analysis, self.ui
             )
-            
+
             self.clock.tick(60)
+
+        self.shutdown()
+
+    def sync_ui(self) -> None:
+        """Push game state into the UI layer. The UI owns no game state itself."""
+        self.ui.update_state(
+            game_state=self.game_state,
+            status_text=self.status_text,
+            judgement=self.last_judgement,
+            coach_text=self.coach_text,
+            current_analysis=self.current_analysis,
+            player_color=self.player_color,
+            move_history_san=self.move_history_san,
+            opening_name=self.opening_name,
+            accuracy=self.session_accuracy,
+        )
+
+    def shutdown(self) -> None:
+        """Release the engine subprocess. Without this the UCI child can outlive
+        the GUI and keep a core busy."""
+        if self.engine is not None:
+            self.engine.close()
+
+    @property
+    def opening_name(self) -> str:
+        return self.openings.describe(self.board)
+
+    @property
+    def session_accuracy(self) -> float:
+        from analysis import game_accuracy
+        return game_accuracy(self.accuracies).overall if self.accuracies else 0.0
 
     def handle_ui_action(self, action: str) -> None:
         if action == "new_game": self.reset_game()
@@ -227,128 +244,152 @@ class Game:
         return chess.Move(start, end)
 
     def attempt_move(self, move: chess.Move) -> None:
-        if move in self.board.legal_moves:
-
-            fen_before_human_move = self.board.fen()
-
-            self.move_history_san.append(self.board.san(move))
-            self.board.push(move)
-            self.last_move = move
-
-            # Fotografiamo la posizione risultante: il thread di classificazione
-            # deve valutare ESATTAMENTE questa FEN, non "la board attuale", che
-            # nel frattempo può già contenere la risposta dell'IA.
-            fen_after_human_move = self.board.fen()
-
-            self.game_state = "ai_turn"
-            self.status_text = "L'istruttore sta valutando..."
-
-            threading.Thread(
-                target=self.process_ai_turn,
-                args=(self.current_analysis, move, fen_before_human_move, fen_after_human_move),
-                daemon=True
-            ).start()
-        else:
+        if move not in self.board.legal_moves:
             self.selected_square = None
+            return
 
-    def process_ai_turn(self,
-                        analysis_before: Dict[str, Any],
-                        human_move: chess.Move,
-                        human_move_fen_before: str,
-                        human_move_fen_after: Optional[str] = None) -> None:
-        if not self.engine: return
+        board_before = self.board.copy()
 
-        # 0. Verifica che l'analisi "prima della mossa" si riferisca davvero alla
-        #    posizione pre-mossa. self.current_analysis è scritta dal thread di
-        #    analisi in background e può essere obsoleta (o non ancora pronta)
-        #    se l'utente muove velocemente: in quel caso la ricalcoliamo.
-        if human_move != chess.Move.null():
-            if analysis_before.get("fen") != human_move_fen_before:
-                analysis_before = self.engine.get_fast_analysis(human_move_fen_before)
+        self.move_history_san.append(self.board.san(move))
+        self.board.push(move)
+        self.last_move = move
 
-            # 1. Valuta la posizione DOPO la mossa umana.
-            #    La FEN va impostata esplicitamente sul motore (evaluate_position
-            #    lo fa sotto lock): interrogare get_evaluation() "a secco"
-            #    restituirebbe la valutazione dell'ultima posizione caricata da
-            #    un altro thread, cioè una classificazione su FEN sbagliata.
-            fen_after = human_move_fen_after or self.board.fen()
-            eval_after = self.engine.evaluate_position(fen_after)
+        # Snapshot the resulting position: the grading thread must evaluate
+        # exactly this one, not "the current board", which by then may already
+        # contain the engine's reply.
+        board_after = self.board.copy()
 
-            # 2. Classifica e spiega (usando lo stato PRIMA della mossa)
-            board_before = chess.Board(human_move_fen_before)
-            classification_data = self.engine.classify_move(
-                board_before, human_move, analysis_before, eval_after
-            )
-            self.last_move_info = classification_data
+        self.game_state = "ai_turn"
+        self.status_text = "Analysing your move..."
+
+        threading.Thread(
+            target=self.process_ai_turn,
+            args=(board_before, move, board_after),
+            daemon=True,
+        ).start()
+
+    def process_ai_turn(
+        self,
+        board_before: Optional[chess.Board],
+        human_move: Optional[chess.Move],
+        board_after: Optional[chess.Board],
+    ) -> None:
+        if not self.engine or not self.engine.is_ready:
+            return
+
+        if human_move is not None and board_before is not None:
+            self.grade_human_move(board_before, human_move, board_after)
 
         if self.board.is_game_over():
             self.set_game_over_status()
             return
 
-        # 3. Mossa IA
-        ai_move = self.engine.get_ai_move(self.board.fen())
-        if ai_move:
+        ai_move = self.engine.play(self.board)
+        if ai_move and ai_move in self.board.legal_moves:
             self.move_history_san.append(self.board.san(ai_move))
             self.board.push(ai_move)
             self.last_move = ai_move
-            
-        self.run_background_analysis()
-        
+
         if self.board.is_game_over():
             self.set_game_over_status()
+            return
+
+        self.run_background_analysis()
+
+    def grade_human_move(
+        self,
+        board_before: chess.Board,
+        move: chess.Move,
+        board_after: Optional[chess.Board],
+    ) -> None:
+        """Grade one human move and hand the result to the coach.
+
+        The pre-move analysis may be stale (the background worker writes it, and
+        a fast player can move before it lands), so it is re-derived whenever it
+        does not describe the position the move was actually played from.
+        """
+        analysis_before = self.current_analysis
+        if analysis_before.fen != board_before.fen():
+            analysis_before = self.engine.analyse(board_before)
+
+        analysis_after = (
+            self.engine.analyse(board_after) if board_after is not None else EMPTY_ANALYSIS
+        )
+
+        judgement = self.engine.classify_move(
+            board_before, move, analysis_before, analysis_after
+        )
+        judgement.opening = self.opening_name
+        self.coach.annotate(judgement, board_before, move)
+
+        self.last_judgement = judgement
+        self.coach_text = judgement.explanation
+        self.accuracies.append(judgement.accuracy)
+        self.phases.append(phase_of(board_before))
 
     def run_background_analysis(self) -> None:
-        if not self.engine: return
+        if not self.engine or not self.engine.is_ready:
+            return
+
         def analyze():
-            current_fen = self.board.fen()
-            data = self.engine.get_fast_analysis(current_fen)
-            # Controllo anti-race condition
-            if self.board.fen() == current_fen:
+            board_snapshot = self.board.copy()
+            data = self.engine.analyse(board_snapshot)
+            # Only publish if the board still holds the analysed position.
+            if self.board.fen() == data.fen:
                 self.current_analysis = data
                 if self.game_state != "game_over":
                     self.game_state = "human_turn"
-                    self.status_text = f"Tocca a te ({'Bianco' if self.player_color else 'Nero'})"
-        
+                    side = "White" if self.player_color == chess.WHITE else "Black"
+                    self.status_text = f"Your turn ({side})"
+
         self.game_state = "analysis_pending"
         threading.Thread(target=analyze, daemon=True).start()
 
     def set_game_over_status(self) -> None:
         self.game_state = "game_over"
-        res = self.board.result()
         if self.board.is_checkmate():
-            winner = "Nero" if self.board.turn == chess.WHITE else "Bianco"
-            self.status_text = f"Scacco Matto! Vince {winner}."
+            winner = "Black" if self.board.turn == chess.WHITE else "White"
+            self.status_text = f"Checkmate - {winner} wins"
         else:
-            self.status_text = f"Partita finita: {res}"
+            self.status_text = f"Game over: {self.board.result()}"
 
     def reset_game(self) -> None:
         self.board.reset()
         self.move_history_san.clear()
         self.last_move = None
-        self.last_move_info = {"label": "", "color": COLORS.TESTO_SEC, "explanation": "Nuova partita iniziata.", "loss": 0.0}
-        
+        self.last_judgement = None
+        self.current_analysis = EMPTY_ANALYSIS
+        self.coach_text = "New game. Play a move to get feedback."
+        self.accuracies.clear()
+        self.phases.clear()
+
         if self.player_color == chess.BLACK:
             self.game_state = "ai_turn"
-            threading.Thread(target=self.process_ai_turn, args=({}, chess.Move.null(), self.board.fen()), daemon=True).start()
+            threading.Thread(
+                target=self.process_ai_turn, args=(None, None, None), daemon=True
+            ).start()
         else:
             self.run_background_analysis()
 
     def undo_move(self) -> None:
-        """Annulla l'ultima coppia di mosse (IA + Umano)."""
-        if self.game_state not in ["human_turn", "game_over", "analysis_pending"]: return
-        
-        # 1. Annulla la mossa AI
-        if self.board.move_stack:
-            self.board.pop()
-            if self.move_history_san: self.move_history_san.pop()
+        """Roll back the human/engine move pair and re-run the analysis."""
+        if self.game_state not in ("human_turn", "game_over", "analysis_pending", "no_engine"):
+            return
 
-        # 2. Annulla la mossa Umana
-        if self.board.move_stack:
-            self.board.pop()
-            if self.move_history_san: self.move_history_san.pop()
-            
-        # 3. Aggiorna lo stato e l'analisi
+        for _ in range(2):
+            if self.board.move_stack:
+                self.board.pop()
+                if self.move_history_san:
+                    self.move_history_san.pop()
+
+        # Drop the grade that belonged to the move just taken back, so the
+        # panel cannot keep showing a verdict on a move that no longer exists.
+        if self.accuracies:
+            self.accuracies.pop()
+        if self.phases:
+            self.phases.pop()
+
         self.last_move = self.board.peek() if self.board.move_stack else None
-        
-        self.last_move_info = {"label": "", "color": COLORS.TESTO_SEC, "explanation": "Mossa annullata. In attesa di analisi.", "loss": 0.0}
-        self.run_background_analysis()  
+        self.last_judgement = None
+        self.coach_text = "Move taken back."
+        self.run_background_analysis()

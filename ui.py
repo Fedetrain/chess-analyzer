@@ -4,9 +4,8 @@ import chess
 from typing import Dict, Any, Tuple, Optional, List
 from config import (
     SCREEN_HEIGHT, ANALYSIS_PANEL_WIDTH, PANEL_X,
-    ELO_LEVELS, DEFAULT_ELO_INDEX, COLORS
+    ELO_LEVELS, DEFAULT_ELO_INDEX, COLORS, UCI_ELO_MIN
 )
-from chess_utils import ChessUtils
 
 class UIManager:
     """Gestore Interfaccia Utente Moderna e Reattiva"""
@@ -18,11 +17,12 @@ class UIManager:
         # State containers
         self.game_state = ""
         self.status_text = ""
-        self.last_move_info: Dict[str, Any] = {}
-        self.current_analysis: Dict[str, Any] = {}
+        self.judgement = None
+        self.coach_text = ""
+        self.current_analysis = None
         self.move_history_san: List[str] = []
-        self.current_fen = ""
-        self.history_len = 0
+        self.opening_name = ""
+        self.accuracy = 0.0
         self.player_color: bool = chess.WHITE
 
         # FIX ELO Slider State
@@ -130,60 +130,53 @@ class UIManager:
     def update_state(self,
                      game_state: str,
                      status_text: str,
-                     last_move_info: Dict[str, Any],
-                     current_analysis: Dict[str, Any],
-                     history_len: int,
+                     judgement,
+                     coach_text: str,
+                     current_analysis,
                      player_color: bool,
                      move_history_san: List[str],
-                     current_fen: str) -> None:
-        """Sincronizza lo stato visualizzato con quello del Game.
+                     opening_name: str,
+                     accuracy: float) -> None:
+        """Mirror the game's state into the UI. The UI owns no game state.
 
-        Assegnazioni esplicite (non self.__dict__.update(**kwargs)): un refuso
-        nel nome di un campo verrebbe altrimenti accettato in silenzio,
-        creando un attributo nuovo invece di aggiornare quello atteso.
+        Explicit assignments rather than ``self.__dict__.update(**kwargs)``: a
+        typo in a field name would otherwise be accepted silently, creating a
+        new attribute instead of updating the intended one.
         """
         self.game_state = game_state
         self.status_text = status_text
-        self.last_move_info = last_move_info
+        self.judgement = judgement
+        self.coach_text = coach_text
         self.current_analysis = current_analysis
-        self.history_len = history_len
         self.player_color = player_color
         self.move_history_san = move_history_san
-        self.current_fen = current_fen
+        self.opening_name = opening_name
+        self.accuracy = accuracy
 
     def draw(self, screen: pygame.Surface, board: chess.Board):
-        # Sfondo Pannello
         pygame.draw.rect(screen, COLORS.PANEL, (PANEL_X, 0, ANALYSIS_PANEL_WIDTH, SCREEN_HEIGHT))
-        
+
         x = PANEL_X + self.panel_padding
-        y = 20
+        y = 16
         w = ANALYSIS_PANEL_WIDTH - (2 * self.panel_padding)
 
-        # 1. Titolo e Status
-        screen.blit(self.fonts['title'].render("Gem Scacchi Pro", True, COLORS.TESTO), (x, y))
-        y += 35
-        col = COLORS.MIGLIORE if "Tocca a te" in self.status_text else COLORS.TESTO_SEC
+        screen.blit(self.fonts['title'].render("Chess Analyzer", True, COLORS.TESTO), (x, y))
+        y += 32
+        col = COLORS.MIGLIORE if "Your turn" in self.status_text else COLORS.TESTO_SEC
         screen.blit(self.fonts['body'].render(self.status_text, True, col), (x, y))
-        
-        y += 40
-        
-        # 2. NUOVO: Box Apertura / Strategia
-        opening_name = ChessUtils.identify_opening(board)
-        self.draw_info_box(screen, x, y, w, "Apertura Attuale", opening_name, COLORS.TESTO_ACCENT)
-        y += 60
+        y += 32
 
-        # 3. Coach Bubble
+        self.draw_info_box(screen, x, y, w, "Opening", self.opening_name or "-", COLORS.TESTO_ACCENT)
+        y += 58
+
         self.draw_coach_bubble(screen, x, y, w)
-        y += 120
+        y += 128
 
-        # 4. Analisi Tecnica
         self.draw_technical_analysis(screen, x, y, w)
-        y += 80
+        y += 78
 
-        # 5. Storico Mosse
         self.draw_move_history(screen, x, y, w)
 
-        # 6. Controlli (Slider + Bottoni)
         self.draw_controls(screen)
 
     def draw_info_box(self, screen, x, y, w, label, value, color):
@@ -194,19 +187,46 @@ class UIManager:
         val = self.fonts['opening'].render(value, True, color)
         screen.blit(val, (x+10, y+22))
 
+    #: Grade -> colour. Kept here so the palette stays a UI concern and the
+    #: analysis layer needs no knowledge of pygame.
+    GRADE_COLORS = {
+        "Best": COLORS.MIGLIORE,
+        "Book": COLORS.TESTO_ACCENT,
+        "Excellent": COLORS.OTTIMA,
+        "Good": COLORS.BUONA,
+        "Inaccuracy": COLORS.IMPRECISIONE,
+        "Mistake": COLORS.ERRORE,
+        "Blunder": COLORS.GRAVE,
+    }
+
     def draw_coach_bubble(self, screen, x, y, w):
-        rect = pygame.Rect(x, y, w, 110)
+        rect = pygame.Rect(x, y, w, 118)
         pygame.draw.rect(screen, (50, 50, 50), rect, border_radius=10)
         pygame.draw.rect(screen, (70, 70, 70), rect, width=1, border_radius=10)
-        
-        # Label (Ottima, Errore, ecc)
-        l_text = self.last_move_info.get("label", "Info")
-        l_col = self.last_move_info.get("color", COLORS.TESTO)
-        screen.blit(self.fonts['header'].render(f"Coach: {l_text}", True, l_col), (x+10, y+10))
-        
-        # Testo Spiegazione
-        explanation = self.last_move_info.get("explanation", "")
-        self._draw_wrapped_text(screen, explanation, x+10, y+40, w-20, self.fonts['coach'])
+
+        if self.judgement is not None:
+            label = self.judgement.label
+            colour = self.GRADE_COLORS.get(label, COLORS.TESTO)
+            heading = f"{label}  ({self.judgement.accuracy:.0f}%)"
+        else:
+            colour, heading = COLORS.TESTO_SEC, "Coach"
+
+        screen.blit(self.fonts['header'].render(heading, True, colour), (x + 10, y + 8))
+
+        # The structure name is the single most useful line the coach produces:
+        # it says what kind of position this is, not just how good it is.
+        plan = getattr(self.judgement, "plan", None) if self.judgement else None
+        offset = y + 34
+        if plan is not None and plan.structure_name:
+            screen.blit(
+                self.fonts['small'].render(plan.structure_name, True, COLORS.TESTO_ACCENT),
+                (x + 10, offset),
+            )
+            offset += 20
+
+        self._draw_wrapped_text(
+            screen, self.coach_text, x + 10, offset, w - 20, self.fonts['coach'], max_lines=4
+        )
 
     def _draw_wrapped_text(self, screen, text, x, y, max_w, font, max_lines: int = 3):
         """Word-wrap semplice entro max_w pixel.
@@ -230,27 +250,44 @@ class UIManager:
             screen.blit(font.render(line, True, (220,220,220)), (x, y + i*20))
 
     def draw_technical_analysis(self, screen, x, y, w):
-        # Valutazione
-        eval_data = self.current_analysis.get("evaluation", {})
-        val = eval_data.get("value", 0)
-        if eval_data.get("type") == "mate": val_str = f"Mate in {abs(val)}"
-        else: val_str = f"{val/100:+.2f}"
-        
-        screen.blit(self.fonts['header'].render(f"Valutazione: {val_str}", True, COLORS.TESTO), (x, y))
-        
-        # Top Moves
-        moves = self.current_analysis.get("top_moves", [])
-        for i, m in enumerate(moves[:2]):
-            mv_text = m.get('Move')
-            cp = m.get('Centipawn', 0)
-            if cp: score = f"{cp/100:+.2f}"
-            else: score = f"M{m.get('Mate')}"
-            
-            txt = f"{i+1}. {mv_text} ({score})"
-            screen.blit(self.fonts['small'].render(txt, True, COLORS.TESTO_SEC), (x, y + 25 + i*18))
+        analysis = self.current_analysis
+        candidates = getattr(analysis, "candidates", None) or []
+        mate_in = getattr(analysis, "mate_in", None)
+        score = getattr(analysis, "score_white", 0)
+
+        if not candidates:
+            screen.blit(
+                self.fonts['header'].render("Evaluation: -", True, COLORS.TESTO_SEC), (x, y)
+            )
+            return
+
+        # Always shown from White's point of view, and labelled as such, so the
+        # number can never be read in the wrong frame of reference.
+        text = f"Mate in {abs(mate_in)}" if mate_in is not None else f"{score / 100:+.2f}"
+        screen.blit(
+            self.fonts['header'].render(f"Evaluation: {text} (White)", True, COLORS.TESTO), (x, y)
+        )
+
+        if self.accuracy:
+            screen.blit(
+                self.fonts['small'].render(
+                    f"Session accuracy: {self.accuracy:.1f}%", True, COLORS.TESTO_SEC
+                ),
+                (x + 240, y + 4),
+            )
+
+        for i, candidate in enumerate(candidates[:3]):
+            if candidate.mate_in is not None:
+                value = f"M{abs(candidate.mate_in)}"
+            else:
+                value = f"{candidate.score_white / 100:+.2f}"
+            line = f"{i + 1}. {candidate.uci}  ({value})"
+            screen.blit(
+                self.fonts['small'].render(line, True, COLORS.TESTO_SEC), (x, y + 26 + i * 17)
+            )
 
     def draw_move_history(self, screen, x, y, w):
-        title = self.fonts['body'].render("Storico Partita", True, COLORS.TESTO_SEC)
+        title = self.fonts['body'].render("Moves", True, COLORS.TESTO_SEC)
         screen.blit(title, (x, y))
         
         history_rect = pygame.Rect(x, y+25, w, 80)
@@ -314,8 +351,12 @@ class UIManager:
         knob_draw_rect.center = (knob_center_x, track.centery)
         pygame.draw.circle(screen, (240,240,240), knob_draw_rect.center, 8)
         
-        # Label ELO
-        lbl = self.fonts['small'].render(f"Forza IA: {display_elo}", True, COLORS.TESTO_SEC)
+        # Below 1320 the engine has no calibrated Elo, so the label says so
+        # rather than quoting a rating the engine cannot actually deliver.
+        suffix = "" if display_elo >= UCI_ELO_MIN else " (approx.)"
+        lbl = self.fonts['small'].render(
+            f"Engine strength: {display_elo}{suffix}", True, COLORS.TESTO_SEC
+        )
         screen.blit(lbl, (track.left, track.top - 20))
         
         # Buttons

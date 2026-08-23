@@ -1,214 +1,296 @@
 # engine.py
-import chess
+"""Stockfish (or any UCI engine) driven through python-chess's own engine layer.
+
+Why ``chess.engine`` and not the ``stockfish`` PyPI wrapper
+-----------------------------------------------------------
+The wrapper was the project's single most damaging dependency: it is a
+synchronous shim whose default option table still sends Stockfish four options
+the engine deleted years ago, and whose ``UCI_LimitStrength`` value type changed
+from ``str`` to ``bool`` in a later release -- which silently killed engine
+startup here. ``chess.engine`` ships with python-chess, which this project
+already depends on, so dropping the wrapper *removes* a dependency.
+
+It also removes a whole class of bugs by construction:
+
+* ``analyse()`` returns a :class:`chess.engine.PovScore`. ``.white()`` and
+  ``.relative()`` are separate, explicit methods, so an evaluation can no longer
+  be rendered in the wrong frame of reference by accident.
+* ``Score.score(mate_score=N)`` projects mates onto the centipawn scale natively;
+  no hand-rolled normalisation.
+* ``multipv=`` returns genuinely independent principal variations.
+* ``SimpleEngine`` is documented thread-safe and serialises commands internally.
+"""
+
+from __future__ import annotations
+
+import logging
 import threading
-from stockfish import Stockfish
-from typing import Dict, Any, Tuple, Optional
-import time
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
+import chess
+import chess.engine
+
+from analysis import Judgement, classify
+from chess_utils import AnalysisCache
 from config import (
-    MATE_SCORE, COLORS, STOCKFISH_MISSING_MESSAGE,
-    SOGLIA_MIGLIORE, SOGLIA_OTTIMA, SOGLIA_BUONA,
-    SOGLIA_IMPRECISIONE, SOGLIA_ERRORE,DEPTH_FAST_ANALYSIS,DEPTH_FULL_ANALYSIS
+    DEPTH_FAST_ANALYSIS,
+    DEPTH_FULL_ANALYSIS,
+    ENGINE_HASH_MB,
+    ENGINE_THREADS,
+    MATE_SCORE,
+    MULTIPV,
+    STOCKFISH_MISSING_MESSAGE,
+    strength_for_elo,
 )
-from chess_utils import AnalysisCache, ChessInstructor
 
-class EngineWrapper:
-    """Gestisce Stockfish e fornisce analisi arricchite.
+log = logging.getLogger(__name__)
 
-    Il percorso del binario è già risolto da config.resolve_stockfish_path():
-    qui lo si valida soltanto e si apre la sessione UCI.
 
-    Thread-safety: il protocollo UCI è stateful (set_fen_position seguito da
-    una query) e la GUI interroga il motore da più thread (analisi di
-    background + turno IA). Ogni sequenza posizione->query è quindi
-    serializzata da self._lock, e nessun chiamante esterno deve toccare
-    self.stockfish direttamente.
+@dataclass
+class MoveCandidate:
+    """One principal variation returned by the engine."""
+
+    move: chess.Move
+    score_white: int          # centipawns, White's point of view, mates projected
+    score_relative: int       # centipawns, side-to-move's point of view
+    pv: List[chess.Move] = field(default_factory=list)
+    mate_in: Optional[int] = None
+
+    @property
+    def uci(self) -> str:
+        return self.move.uci()
+
+
+@dataclass
+class Analysis:
+    """The engine's verdict on one position.
+
+    ``fen`` is carried so a caller can tell whether a result that arrived from a
+    worker thread still describes the position on the board.
     """
 
-    def __init__(self, path: Optional[str]):
+    fen: str
+    depth: int
+    candidates: List[MoveCandidate] = field(default_factory=list)
+    score_white: int = 0
+    mate_in: Optional[int] = None
+
+    @property
+    def best(self) -> Optional[MoveCandidate]:
+        return self.candidates[0] if self.candidates else None
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.candidates
+
+
+EMPTY_ANALYSIS = Analysis(fen="", depth=0)
+
+
+def _to_cp(score: chess.engine.Score) -> int:
+    """Project a score (centipawns or mate) onto a single centipawn scale."""
+    return int(score.score(mate_score=MATE_SCORE))
+
+
+class EngineWrapper:
+    """Owns the UCI session and turns raw engine output into domain objects.
+
+    Thread-safety: ``SimpleEngine`` already serialises its own commands, but the
+    strength configuration is mutable shared state, so reconfiguration is guarded
+    by ``self._lock`` to keep a slider drag from interleaving with a search.
+    """
+
+    def __init__(self, path: Optional[str], elo: int = 1500):
         self._lock = threading.RLock()
+        self._engine: Optional[chess.engine.SimpleEngine] = None
         self.analysis_cache = AnalysisCache(max_size=200, timeout_seconds=60)
-        self.stockfish = None
+        self.engine_name = "none"
+        self.current_elo = elo
 
         if not path:
-            print(STOCKFISH_MISSING_MESSAGE)
+            log.warning("No engine binary configured.\n%s", STOCKFISH_MISSING_MESSAGE)
             return
 
         try:
-            # Parametri ottimizzati per analisi rapida ma profonda
-            parameters = {
-                "Threads": 2,
-                "Hash": 64,
-                "MultiPV": 1, # Analizziamo solo la linea principale per velocità, 3 per approfondimento
-                "UCI_LimitStrength": "true",
-            }
-            self.stockfish = Stockfish(path=path, parameters=parameters)
-            self.set_elo(1500)
-            print(f"Stockfish ready: {path}")
+            self._engine = chess.engine.SimpleEngine.popen_uci(path, timeout=15.0)
+            self.engine_name = self._engine.id.get("name", "unknown UCI engine")
+            self._configure_base()
+            self.set_elo(elo)
+            log.info("Engine ready: %s (%s)", self.engine_name, path)
+        except Exception as exc:  # noqa: BLE001 - a broken engine must never crash the GUI
+            log.error("Engine initialisation failed: %s", exc)
+            log.info("%s", STOCKFISH_MISSING_MESSAGE)
+            self._close_quietly()
 
-        except Exception as e:
-            print(f"Stockfish initialisation failed: {e}")
-            print(STOCKFISH_MISSING_MESSAGE)
-            self.stockfish = None
+    # ------------------------------------------------------------------ setup
+
+    def _supported(self, name: str) -> bool:
+        return self._engine is not None and name in self._engine.options
+
+    def _configure_base(self) -> None:
+        """Apply only options the engine actually advertises.
+
+        Sending an unknown option is exactly how the previous implementation
+        broke, so every key is checked against the engine's own option table
+        before being sent.
+        """
+        # MultiPV is deliberately absent: python-chess manages it itself and
+        # rejects an explicit configure() ("cannot set MultiPV which is
+        # automatically managed"). It is passed per-call to analyse() instead.
+        wanted = {"Threads": ENGINE_THREADS, "Hash": ENGINE_HASH_MB}
+        opts = {k: v for k, v in wanted.items() if self._supported(k)}
+        if opts:
+            self._engine.configure(opts)
+
+    def set_elo(self, elo: int) -> None:
+        """Configure playing strength for a requested Elo.
+
+        Stockfish's ``UCI_Elo`` bottoms out at 1320, so anything below that is
+        expressed with ``Skill Level`` plus a node ceiling instead. The mapping
+        lives in :func:`config.strength_for_elo`.
+        """
+        if not self._engine:
+            self.current_elo = elo
+            return
+
+        profile = strength_for_elo(elo)
+        opts: Dict[str, Any] = {}
+
+        if profile.use_uci_elo and self._supported("UCI_Elo"):
+            opts["UCI_LimitStrength"] = True
+            opts["UCI_Elo"] = self._clamp_option("UCI_Elo", profile.uci_elo)
+        else:
+            if self._supported("UCI_LimitStrength"):
+                opts["UCI_LimitStrength"] = False
+            if self._supported("Skill Level"):
+                opts["Skill Level"] = self._clamp_option("Skill Level", profile.skill_level)
+
+        with self._lock:
+            try:
+                if opts:
+                    self._engine.configure(opts)
+                self.current_elo = elo
+                self._node_limit = profile.node_limit
+            except Exception as exc:  # noqa: BLE001
+                log.error("Could not apply strength %s: %s", elo, exc)
+
+    def _clamp_option(self, name: str, value: int) -> int:
+        opt = self._engine.options[name]
+        if opt.min is not None:
+            value = max(opt.min, value)
+        if opt.max is not None:
+            value = min(opt.max, value)
+        return value
 
     @property
     def is_ready(self) -> bool:
-        return self.stockfish is not None
+        return self._engine is not None
 
-    def set_elo(self, elo: int) -> None:
-        if not self.stockfish: return
-        # Clamp ELO tra i limiti accettati da UCI_Elo
-        clamped = max(1320, min(3190, elo))
-        with self._lock:
-            self.stockfish.set_elo_rating(clamped)
+    def close(self) -> None:
+        self._close_quietly()
 
-    def get_ai_move(self, fen: str) -> Optional[chess.Move]:
-        if not self.stockfish: return None
-        with self._lock:
-            self.stockfish.set_fen_position(fen)
-            best = self.stockfish.get_best_move()
-        return chess.Move.from_uci(best) if best else None
+    def _close_quietly(self) -> None:
+        engine, self._engine = self._engine, None
+        if engine is not None:
+            try:
+                engine.quit()
+            except Exception:  # noqa: BLE001
+                pass
 
-    def evaluate_position(self, fen: str, depth: int = DEPTH_FAST_ANALYSIS) -> Dict[str, Any]:
-        """Valutazione statica della posizione *fen*, dal punto di vista di chi muove.
+    def __enter__(self) -> "EngineWrapper":
+        return self
 
-        La FEN viene sempre impostata esplicitamente prima della query: senza
-        questo passaggio si valuterebbe la posizione rimasta in memoria
-        dall'ultima analisi, che con più thread attivi è quasi sempre un'altra.
-        """
-        if not self.stockfish: return {}
-        with self._lock:
-            self.stockfish.set_fen_position(fen)
-            self.stockfish.set_depth(depth)
-            return self.stockfish.get_evaluation()
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
-    def get_analysis(self, fen: str, depth: int = DEPTH_FULL_ANALYSIS) -> Dict[str, Any]:
-        """Ottiene analisi (valutazione + top moves) con caching."""
-        if not self.stockfish: return {}
+    # --------------------------------------------------------------- analysis
 
-        # La chiave della cache include la profondità
-        cache_key = f"{fen}_{depth}"
-        cached = self.analysis_cache.get(cache_key)
-        if cached: return cached
+    def analyse(self, board: chess.Board, depth: int = DEPTH_FAST_ANALYSIS) -> Analysis:
+        """Analyse *board*, with an LRU cache keyed by position and depth."""
+        if not self._engine:
+            return EMPTY_ANALYSIS
 
-        with self._lock:
-            self.stockfish.set_fen_position(fen)
-            self.stockfish.set_depth(depth)
+        fen = board.fen()
+        key = f"{fen}_{depth}"
+        if (cached := self.analysis_cache.get(key)) is not None:
+            return cached
 
-            eval_data = self.stockfish.get_evaluation()
-            top_moves = self.stockfish.get_top_moves(3) # Le prime 3 per i suggerimenti
+        try:
+            with self._lock:
+                infos = self._engine.analyse(
+                    board,
+                    chess.engine.Limit(depth=depth),
+                    multipv=MULTIPV,
+                )
+        except Exception as exc:  # noqa: BLE001
+            log.error("Analysis failed: %s", exc)
+            return EMPTY_ANALYSIS
 
-        result = {
-            "fen": fen,          # permette ai chiamanti di verificare a quale posizione si riferisce
-            "depth": depth,
-            "evaluation": eval_data,
-            "top_moves": top_moves,
-            "timestamp": time.time()
-        }
-        self.analysis_cache.set(cache_key, result)
-        return result
+        if isinstance(infos, dict):        # multipv=None collapses to a single dict
+            infos = [infos]
 
-    def get_fast_analysis(self, fen: str) -> Dict[str, Any]:
-        """Wrapper per analisi veloce."""
-        return self.get_analysis(fen, depth=DEPTH_FAST_ANALYSIS)
+        candidates: List[MoveCandidate] = []
+        for info in infos:
+            pv = info.get("pv") or []
+            score = info.get("score")
+            if not pv or score is None:
+                continue
+            candidates.append(
+                MoveCandidate(
+                    move=pv[0],
+                    score_white=_to_cp(score.white()),
+                    score_relative=_to_cp(score.relative),
+                    pv=list(pv[:8]),
+                    mate_in=score.white().mate(),
+                )
+            )
 
-
-    def classify_move(self, 
-                      board_before: chess.Board,
-                      move: chess.Move,
-                      analysis_before: Dict[str, Any], 
-                      eval_after: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Classifica la mossa e genera una spiegazione (Chatbot).
-        Restituisce un dizionario ricco di metadati per la UI.
-        """
-        
-        # Default response structure
-        result = {
-            "label": "Analisi...",
-            "color": COLORS.TESTO_SEC,
-            "loss": 0.0,
-            "explanation": "Sto analizzando la posizione...",
-            "is_best": False
-        }
-
-        if not analysis_before.get('top_moves'):
-            return result
-            
-        # 1. Calcolo Punteggi (CP)
-        # Normalizziamo tutto dal punto di vista di chi ha fatto la mossa
-        player_turn = board_before.turn # Chi ha mosso?
-        
-        best_move_data = analysis_before['top_moves'][0]
-        
-        # Punteggio atteso (Miglior mossa possibile)
-        score_best = self._normalize_score(best_move_data, player_turn)
-        
-        # Punteggio effettivo (Dopo la mossa)
-        # eval_after è calcolato sulla board DOPO la mossa, quindi tocca all'avversario.
-        # Stockfish ritorna CP per chi deve muovere. Quindi invertiamo.
-        score_actual = -self._normalize_eval(eval_after)
-        
-        # Calcolo perdita (Loss) in centipawn
-        loss = score_best - score_actual
-        loss = max(0, loss) # Non può essere negativa (al massimo 0 se hai trovato una mossa migliore dell'engine a bassa profondità)
-        
-        result["loss"] = loss / 100.0
-        
-        # 2. Classificazione
-        # Controllo speciale: è la mossa migliore suggerita?
-        best_uci = best_move_data.get("Move")
-        is_engine_best = (best_uci == move.uci())
-        
-        if is_engine_best or loss <= SOGLIA_MIGLIORE:
-            result["label"] = "★ Migliore"
-            result["color"] = COLORS.MIGLIORE
-            result["is_best"] = True
-            # Se era un sacrificio o mossa complessa, potrebbe essere "Brillante" (logica futura)
-        elif loss <= SOGLIA_OTTIMA:
-            result["label"] = "Ottima"
-            result["color"] = COLORS.OTTIMA
-        elif loss <= SOGLIA_BUONA:
-            result["label"] = "Buona"
-            result["color"] = COLORS.BUONA
-        elif loss <= SOGLIA_IMPRECISIONE:
-            result["label"] = "Imprecisione"
-            result["color"] = COLORS.IMPRECISIONE
-        elif loss <= SOGLIA_ERRORE:
-            result["label"] = "Errore"
-            result["color"] = COLORS.ERRORE
-        else:
-            result["label"] = "Grave Errore"
-            result["color"] = COLORS.GRAVE
-
-        # 3. Generazione Spiegazione (Chatbot)
-        board_after = board_before.copy()
-        board_after.push(move)
-        
-        result["explanation"] = ChessInstructor.explain_move(
-            board_before, move, result["label"], result["loss"], board_after.is_checkmate()
+        result = Analysis(
+            fen=fen,
+            depth=depth,
+            candidates=candidates,
+            score_white=candidates[0].score_white if candidates else 0,
+            mate_in=candidates[0].mate_in if candidates else None,
         )
-        
+        self.analysis_cache.set(key, result)
         return result
 
-    def _normalize_score(self, move_data: Dict, turn: bool) -> int:
-        """Estrae CP o Mate score normalizzato in CP."""
-        val = 0
-        if 'Centipawn' in move_data and move_data['Centipawn'] is not None:
-            val = move_data['Centipawn']
-        elif 'Mate' in move_data and move_data['Mate'] is not None:
-            m = move_data['Mate']
-            val = (MATE_SCORE - abs(m)*100) if m > 0 else (-MATE_SCORE + abs(m)*100)
-        return val
+    def analyse_fen(self, fen: str, depth: int = DEPTH_FAST_ANALYSIS) -> Analysis:
+        return self.analyse(chess.Board(fen), depth)
 
-    def _normalize_eval(self, eval_data: Dict) -> int:
-        """Simile a sopra ma per il formato output di get_evaluation()."""
-        val = eval_data.get('value', 0)
-        if eval_data.get('type') == 'mate':
-            val = (MATE_SCORE - abs(val)*100) if val > 0 else (-MATE_SCORE + abs(val)*100)
-        return val
+    def deep_analyse(self, board: chess.Board) -> Analysis:
+        return self.analyse(board, depth=DEPTH_FULL_ANALYSIS)
 
-    def get_move_accuracy(self, fen: str, move: chess.Move) -> float:
-        # Placeholder per calcolo accuratezza % (stile chess.com)
-        # Richiederebbe un calcolo basato sulla win probability
-        return 0.0
+    # ------------------------------------------------------------------- play
+
+    def play(self, board: chess.Board, depth: int = DEPTH_FAST_ANALYSIS) -> Optional[chess.Move]:
+        """Ask the engine for a move at the configured strength."""
+        if not self._engine:
+            return None
+
+        node_limit = getattr(self, "_node_limit", None)
+        limit = (
+            chess.engine.Limit(nodes=node_limit)
+            if node_limit
+            else chess.engine.Limit(depth=depth)
+        )
+        try:
+            with self._lock:
+                result = self._engine.play(board, limit)
+            return result.move
+        except Exception as exc:  # noqa: BLE001
+            log.error("Engine move failed: %s", exc)
+            return None
+
+    # --------------------------------------------------------------- grading
+
+    def classify_move(
+        self,
+        board_before: chess.Board,
+        move: chess.Move,
+        analysis_before: Analysis,
+        analysis_after: Analysis,
+    ) -> Judgement:
+        """Grade *move* using win-probability loss (see :mod:`analysis`)."""
+        return classify(board_before, move, analysis_before, analysis_after)
