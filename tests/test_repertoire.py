@@ -4,9 +4,8 @@ import io
 
 import chess
 import chess.pgn
-import pytest
 
-from repertoire import Repertoire, RepertoireMove
+from repertoire import Repertoire
 
 
 def rep_white() -> Repertoire:

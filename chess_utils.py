@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import time
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 import chess
 
@@ -27,7 +27,7 @@ class ChessUtils:
 
     @staticmethod
     @lru_cache(maxsize=LEGAL_MOVES_CACHE_SIZE)
-    def get_legal_moves_cached(fen: str) -> Set[chess.Move]:
+    def get_legal_moves_cached(fen: str) -> set[chess.Move]:
         """Legal moves for a FEN, memoised.
 
         The render loop asks for the legal moves of the selected piece on every
@@ -61,10 +61,10 @@ class AnalysisCache:
     def __init__(self, max_size: int = 100, timeout_seconds: int = 30):
         self.max_size = max_size
         self.timeout = timeout_seconds
-        self._cache: Dict[str, Tuple[Any, float]] = {}
-        self._order: List[str] = []
+        self._cache: dict[str, tuple[Any, float]] = {}
+        self._order: list[str] = []
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         if key not in self._cache:
             return None
         data, timestamp = self._cache[key]

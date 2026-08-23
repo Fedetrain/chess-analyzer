@@ -28,7 +28,6 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from typing import Dict, List, Optional, Tuple
 
 import chess
 
@@ -163,7 +162,7 @@ class CardStats:
 
     reviews: int = 0
     lapses: int = 0
-    last_answer: Optional[str] = None
+    last_answer: str | None = None
 
     def to_dict(self) -> dict:
         return {
@@ -173,7 +172,7 @@ class CardStats:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "CardStats":
+    def from_dict(cls, data: dict) -> CardStats:
         return cls(
             reviews=int(data.get("reviews", 0)),
             lapses=int(data.get("lapses", 0)),
@@ -187,7 +186,7 @@ class Question:
 
     board: chess.Board
     expected: RepertoireMove
-    line: List[chess.Move] = field(default_factory=list)
+    line: list[chess.Move] = field(default_factory=list)
     mode: DrillMode = DrillMode.SINGLE_POSITION
 
     @property
@@ -201,16 +200,16 @@ class StudySession:
     def __init__(
         self,
         repertoire: Repertoire,
-        path: Optional[str] = None,
+        path: str | None = None,
         scheduler=None,
-        rng: Optional[random.Random] = None,
+        rng: random.Random | None = None,
     ):
         self.repertoire = repertoire
         self.path = path
         self.scheduler = scheduler if scheduler is not None else make_scheduler()
         self.rng = rng or random.Random()
-        self.states: Dict[str, dict] = {}
-        self.stats: Dict[str, CardStats] = {}
+        self.states: dict[str, dict] = {}
+        self.stats: dict[str, CardStats] = {}
         if path and os.path.exists(path):
             self.load(path)
 
@@ -225,10 +224,10 @@ class StudySession:
             self.states[card_id] = self.scheduler.new_state()
         return self.states[card_id]
 
-    def due_cards(self, now: Optional[datetime] = None) -> List[RepertoireMove]:
+    def due_cards(self, now: datetime | None = None) -> list[RepertoireMove]:
         """Cards whose review time has arrived, soonest first."""
         now = now or _utcnow()
-        due: List[Tuple[datetime, RepertoireMove]] = []
+        due: list[tuple[datetime, RepertoireMove]] = []
         for entry in self.repertoire.own_moves:
             state = self._state_for(entry.card_id)
             when = self.scheduler.due_at(state)
@@ -240,8 +239,8 @@ class StudySession:
     def next_question(
         self,
         mode: DrillMode = DrillMode.WHOLE_LINE,
-        now: Optional[datetime] = None,
-    ) -> Optional[Question]:
+        now: datetime | None = None,
+    ) -> Question | None:
         """Pick the most overdue card and build a prompt for it."""
         due = self.due_cards(now)
         if not due:
@@ -255,7 +254,7 @@ class StudySession:
 
     def _route_to(
         self, target: RepertoireMove
-    ) -> Tuple[Optional[chess.Board], List[chess.Move]]:
+    ) -> tuple[chess.Board | None, list[chess.Move]]:
         """Find a move sequence from the start that reaches the card's position.
 
         Needed because a card is keyed by position, not by line: to drill it in
@@ -286,7 +285,7 @@ class StudySession:
                 queue.append((child, path + [entry.move]))
         return None, []
 
-    def opponent_reply(self, board: chess.Board) -> Optional[chess.Move]:
+    def opponent_reply(self, board: chess.Board) -> chess.Move | None:
         """Choose the opponent's move from the repertoire.
 
         Weighted by how often the branch appeared on import, so the lines you
@@ -304,9 +303,9 @@ class StudySession:
         self,
         question: Question,
         played: chess.Move,
-        now: Optional[datetime] = None,
+        now: datetime | None = None,
         hesitated: bool = False,
-    ) -> Tuple[bool, dict]:
+    ) -> tuple[bool, dict]:
         """Grade an answer and reschedule the card.
 
         Returns ``(correct, new_state)``.
@@ -323,7 +322,7 @@ class StudySession:
 
         return correct, self.record(question.card_id, grade, now)
 
-    def record(self, card_id: str, grade: Answer, now: Optional[datetime] = None) -> dict:
+    def record(self, card_id: str, grade: Answer, now: datetime | None = None) -> dict:
         now = now or _utcnow()
         state = self._state_for(card_id)
         new_state = self.scheduler.review(state, grade, now)
@@ -339,7 +338,7 @@ class StudySession:
             self.save(self.path)
         return new_state
 
-    def due_in(self, card_id: str, now: Optional[datetime] = None) -> timedelta:
+    def due_in(self, card_id: str, now: datetime | None = None) -> timedelta:
         now = now or _utcnow()
         return self.scheduler.due_at(self._state_for(card_id)) - now
 
@@ -364,7 +363,7 @@ class StudySession:
             else 0.0,
         }
 
-    def weakest(self, limit: int = 5) -> List[Tuple[RepertoireMove, CardStats]]:
+    def weakest(self, limit: int = 5) -> list[tuple[RepertoireMove, CardStats]]:
         """The cards you get wrong most: where study time should go."""
         scored = [
             (entry, self.stats[entry.card_id])

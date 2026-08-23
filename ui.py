@@ -1,58 +1,79 @@
 # ui.py
-import pygame
+from typing import Any
+
 import chess
-from typing import Dict, Any, Tuple, Optional, List
+import pygame
+
 from config import (
-    SCREEN_HEIGHT, ANALYSIS_PANEL_WIDTH, PANEL_X,
-    ELO_LEVELS, DEFAULT_ELO_INDEX, COLORS, UCI_ELO_MIN
+    ANALYSIS_PANEL_WIDTH,
+    COLORS,
+    DEFAULT_ELO_INDEX,
+    ELO_LEVELS,
+    PANEL_X,
+    SCREEN_HEIGHT,
+    UCI_ELO_MIN,
 )
+
 
 class UIManager:
     """Gestore Interfaccia Utente Moderna e Reattiva"""
-    
+
     def __init__(self):
         self.panel_padding = 20
         self.button_height = 40
-        
+
         # State containers
         self.game_state = ""
         self.status_text = ""
         self.judgement = None
         self.coach_text = ""
         self.current_analysis = None
-        self.move_history_san: List[str] = []
+        self.move_history_san: list[str] = []
         self.opening_name = ""
         self.accuracy = 0.0
         self.player_color: bool = chess.WHITE
         self.training = False
-        self.training_info: Dict[str, Any] = {}
+        self.training_info: dict[str, Any] = {}
 
         # FIX ELO Slider State
         self.current_elo = ELO_LEVELS[DEFAULT_ELO_INDEX]
         self.is_dragging_slider = False
         self.slider_drag_x = 0 # Posizione X temporanea durante il drag
-        
-        self.ui_rects: Dict[str, pygame.Rect] = {}
-        
+
+        self.ui_rects: dict[str, pygame.Rect] = {}
+
         self.init_fonts()
         self.init_layout()
 
+    #: Fallback sizes, used when the system fonts are unavailable.
+    FONT_FALLBACK_SIZES = {
+        'title': 30, 'header': 24, 'body': 20, 'small': 18,
+        'moves': 18, 'coach': 18, 'opening': 22,
+    }
+
     def init_fonts(self):
+        """Load system fonts, falling back to pygame's built-in face.
+
+        SysFont raises on systems without the named family (most CI runners and
+        many Linux desktops), so the fallback keeps the panel readable rather
+        than taking the app down over a typeface.
+        """
         try:
-            # Prova a caricare font di sistema moderni
-            base_font = "Segoe UI"
+            base = "Segoe UI"
             self.fonts = {
-                'title': pygame.font.SysFont(base_font, 26, bold=True),
-                'header': pygame.font.SysFont(base_font, 20, bold=True),
-                'body': pygame.font.SysFont(base_font, 16),
+                'title': pygame.font.SysFont(base, 26, bold=True),
+                'header': pygame.font.SysFont(base, 20, bold=True),
+                'body': pygame.font.SysFont(base, 16),
                 'small': pygame.font.SysFont("Consolas", 14),
-                'moves': pygame.font.SysFont(base_font, 15),
-                'coach': pygame.font.SysFont(base_font, 16, italic=True),
-                'opening': pygame.font.SysFont(base_font, 18, bold=True) # Font per Apertura
+                'moves': pygame.font.SysFont(base, 15),
+                'coach': pygame.font.SysFont(base, 16, italic=True),
+                'opening': pygame.font.SysFont(base, 18, bold=True),
             }
-        except:
-            # Fallback
-            self.fonts = {k: pygame.font.Font(None, s) for k,s in [('title',30), ('header',24), ('body',20), ('small',18), ('moves',18), ('coach',18), ('opening',22)]}
+        except pygame.error:
+            self.fonts = {
+                name: pygame.font.Font(None, size)
+                for name, size in self.FONT_FALLBACK_SIZES.items()
+            }
 
     def init_layout(self):
         x = PANEL_X + self.panel_padding
@@ -76,7 +97,7 @@ class UIManager:
         # The knob is logical, not a hit target: the whole track is clickable.
         self.ui_rects["slider_knob"] = pygame.Rect(x, y_slider - 8, 20, 24)
 
-    def handle_event(self, event) -> Optional[str]:
+    def handle_event(self, event) -> str | None:
         """Gestione eventi ottimizzata per fluidità dello slider.
 
         Restituisce il nome dell'azione da eseguire (o None). L'applicazione
@@ -134,11 +155,11 @@ class UIManager:
                      coach_text: str,
                      current_analysis,
                      player_color: bool,
-                     move_history_san: List[str],
+                     move_history_san: list[str],
                      opening_name: str,
                      accuracy: float,
                      training: bool = False,
-                     training_info: Optional[Dict[str, Any]] = None) -> None:
+                     training_info: dict[str, Any] | None = None) -> None:
         """Mirror the game's state into the UI. The UI owns no game state.
 
         Explicit assignments rather than ``self.__dict__.update(**kwargs)``: a
@@ -326,29 +347,29 @@ class UIManager:
     def draw_move_history(self, screen, x, y, w):
         title = self.fonts['body'].render("Moves", True, COLORS.TESTO_SEC)
         screen.blit(title, (x, y))
-        
+
         history_rect = pygame.Rect(x, y+25, w, 80)
         pygame.draw.rect(screen, (35,35,35), history_rect, border_radius=4)
-        
+
         # Mostra solo ultime 4 coppie (8 mosse) per evitare overflow
         start_idx = max(0, len(self.move_history_san) - 8)
         moves = self.move_history_san[start_idx:]
-        
+
         px, py = x + 10, y + 30
         for i, m in enumerate(moves):
             # Logica per capire se è bianco o nero
             move_num = (start_idx + i)//2 + 1
             is_white = (start_idx + i) % 2 == 0
-            
+
             if is_white:
                 txt = f"{move_num}. {m}"
                 col = COLORS.TESTO
             else:
                 txt = f"{m}"
                 col = (180,180,180)
-                
+
             screen.blit(self.fonts['moves'].render(txt, True, col), (px, py))
-            
+
             if not is_white: # A capo dopo mossa nera
                 px = x + 10
                 py += 20
@@ -357,37 +378,33 @@ class UIManager:
 
     def draw_controls(self, screen):
         track = self.ui_rects["slider_track"]
-        knob = self.ui_rects["slider_knob"]
-        
-        # Track background
-        pygame.draw.rect(screen, (60,60,60), track, border_radius=4)
-        # Parte riempita (verde)
-        filled_w = 0
-        
-        # Logica posizione visuale
+
+        pygame.draw.rect(screen, (60, 60, 60), track, border_radius=4)
+
         if self.is_dragging_slider:
+            # While dragging, follow the cursor and preview the snapped value.
             knob_center_x = self.slider_drag_x
-            # Calcolo ELO temporaneo solo per visualizzarlo
             pct = (self.slider_drag_x - track.left) / track.width
             idx = round(pct * (len(ELO_LEVELS) - 1))
+            idx = max(0, min(len(ELO_LEVELS) - 1, idx))
             display_elo = ELO_LEVELS[idx]
         else:
-            # Posizione basata sullo stato reale
-            try: idx = ELO_LEVELS.index(self.current_elo)
-            except: idx = DEFAULT_ELO_INDEX
+            try:
+                idx = ELO_LEVELS.index(self.current_elo)
+            except ValueError:
+                idx = DEFAULT_ELO_INDEX
             pct = idx / (len(ELO_LEVELS) - 1)
             knob_center_x = track.left + (pct * track.width)
             display_elo = self.current_elo
-            
-        # Disegna parte riempita track
+
         filled_rect = pygame.Rect(track.left, track.top, knob_center_x - track.left, track.height)
         pygame.draw.rect(screen, COLORS.MIGLIORE, filled_rect, border_radius=4)
-            
+
         # Disegna Knob
         knob_draw_rect = pygame.Rect(0, 0, 16, 16)
         knob_draw_rect.center = (knob_center_x, track.centery)
         pygame.draw.circle(screen, (240,240,240), knob_draw_rect.center, 8)
-        
+
         # Below 1320 the engine has no calibrated Elo, so the label says so
         # rather than quoting a rating the engine cannot actually deliver.
         suffix = "" if display_elo >= UCI_ELO_MIN else " (approx.)"
@@ -395,7 +412,7 @@ class UIManager:
             f"Engine strength: {display_elo}{suffix}", True, COLORS.TESTO_SEC
         )
         screen.blit(lbl, (track.left, track.top - 20))
-        
+
         # Buttons
         mp = pygame.mouse.get_pos()
         labels = {

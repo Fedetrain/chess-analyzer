@@ -19,8 +19,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-from dataclasses import dataclass, field
-from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
+from collections.abc import Iterable
+from dataclasses import dataclass
 
 import chess
 import chess.pgn
@@ -67,7 +67,7 @@ class RepertoireMove:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "RepertoireMove":
+    def from_dict(cls, data: dict) -> RepertoireMove:
         return cls(
             epd=data["epd"],
             uci=data["uci"],
@@ -85,7 +85,7 @@ class Repertoire:
         self.name = name
         self.color = color
         #: position key -> {uci: RepertoireMove}
-        self.edges: Dict[str, Dict[str, RepertoireMove]] = {}
+        self.edges: dict[str, dict[str, RepertoireMove]] = {}
 
     # ------------------------------------------------------------- basics
 
@@ -93,7 +93,7 @@ class Repertoire:
         return sum(len(m) for m in self.edges.values())
 
     @property
-    def own_moves(self) -> List[RepertoireMove]:
+    def own_moves(self) -> list[RepertoireMove]:
         """Every move the student is expected to know: the study cards."""
         return [m for moves in self.edges.values() for m in moves.values() if m.own]
 
@@ -121,17 +121,17 @@ class Repertoire:
         bucket[move.uci()] = entry
         return entry
 
-    def moves_from(self, board: chess.Board) -> List[RepertoireMove]:
+    def moves_from(self, board: chess.Board) -> list[RepertoireMove]:
         return list(self.edges.get(position_key(board), {}).values())
 
-    def own_move_from(self, board: chess.Board) -> Optional[RepertoireMove]:
+    def own_move_from(self, board: chess.Board) -> RepertoireMove | None:
         """The move the student is supposed to play here, if any."""
         for entry in self.moves_from(board):
             if entry.own:
                 return entry
         return None
 
-    def opponent_moves_from(self, board: chess.Board) -> List[RepertoireMove]:
+    def opponent_moves_from(self, board: chess.Board) -> list[RepertoireMove]:
         return [e for e in self.moves_from(board) if not e.own]
 
     def knows(self, board: chess.Board) -> bool:
@@ -155,7 +155,7 @@ class Repertoire:
 
     def add_san_line(self, *sans: str, comment: str = "") -> int:
         board = chess.Board()
-        moves: List[chess.Move] = []
+        moves: list[chess.Move] = []
         for san in sans:
             move = board.parse_san(san)
             moves.append(move)
@@ -189,15 +189,15 @@ class Repertoire:
 
     # ------------------------------------------------------------ traversal
 
-    def lines(self, max_depth: int = 40) -> List[List[RepertoireMove]]:
+    def lines(self, max_depth: int = 40) -> list[list[RepertoireMove]]:
         """Enumerate the repertoire as complete lines, for display.
 
         Depth-limited and cycle-guarded: a position graph can contain loops that
         a tree cannot, so a naive walk would not terminate.
         """
-        found: List[List[RepertoireMove]] = []
+        found: list[list[RepertoireMove]] = []
 
-        def walk(board: chess.Board, path: List[RepertoireMove], seen: Set[str]) -> None:
+        def walk(board: chess.Board, path: list[RepertoireMove], seen: set[str]) -> None:
             if len(path) >= max_depth:
                 found.append(list(path))
                 return
@@ -221,7 +221,7 @@ class Repertoire:
 
     def find_deviation(
         self, moves: Iterable[chess.Move]
-    ) -> Optional[Tuple[int, chess.Move, RepertoireMove]]:
+    ) -> tuple[int, chess.Move, RepertoireMove] | None:
         """Where a game left the repertoire.
 
         Returns ``(ply, move_played, expected_move)`` for the first of the
@@ -240,7 +240,7 @@ class Repertoire:
             board.push(move)
         return None
 
-    def coverage(self) -> Dict[str, int]:
+    def coverage(self) -> dict[str, int]:
         own = self.own_moves
         return {
             "positions": self.position_count,
@@ -260,7 +260,7 @@ class Repertoire:
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "Repertoire":
+    def from_dict(cls, data: dict) -> Repertoire:
         rep = cls(
             name=data.get("name", "Repertoire"),
             color=chess.WHITE if data.get("color", "white") == "white" else chess.BLACK,
@@ -278,6 +278,6 @@ class Repertoire:
         os.replace(tmp, path)      # atomic: a crash mid-write cannot corrupt it
 
     @classmethod
-    def load(cls, path: str) -> "Repertoire":
+    def load(cls, path: str) -> Repertoire:
         with open(path, encoding="utf-8") as handle:
             return cls.from_dict(json.load(handle))

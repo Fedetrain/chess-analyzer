@@ -2,61 +2,61 @@
 import os
 import shutil
 import sys
-from typing import Optional, Tuple
 from dataclasses import dataclass
+
 
 @dataclass
 class UIColors:
     """Configurazione centralizzata dei colori UI - Stile Moderno"""
 
     # Palette Scacchiera e Sfondo
-    BIANCO: Tuple[int, int, int] = (240, 236, 212) 
-    NERO: Tuple[int, int, int] = (119, 149, 86)
-    SFONDO_APP: Tuple[int, int, int] = (48, 46, 43)
-    PANEL: Tuple[int, int, int] = (38, 36, 33)
-    PANEL_HEADER: Tuple[int, int, int] = (30, 29, 27)
-    COORD_TEXT: Tuple[int, int, int] = (255, 255, 255)
+    BIANCO: tuple[int, int, int] = (240, 236, 212)
+    NERO: tuple[int, int, int] = (119, 149, 86)
+    SFONDO_APP: tuple[int, int, int] = (48, 46, 43)
+    PANEL: tuple[int, int, int] = (38, 36, 33)
+    PANEL_HEADER: tuple[int, int, int] = (30, 29, 27)
+    COORD_TEXT: tuple[int, int, int] = (255, 255, 255)
 
     # Testi
-    TESTO: Tuple[int, int, int] = (255, 255, 255)
-    TESTO_SEC: Tuple[int, int, int] = (170, 170, 170)
-    TESTO_ACCENT: Tuple[int, int, int] = (100, 200, 255) # Nuovo colore per Aperture
+    TESTO: tuple[int, int, int] = (255, 255, 255)
+    TESTO_SEC: tuple[int, int, int] = (170, 170, 170)
+    TESTO_ACCENT: tuple[int, int, int] = (100, 200, 255) # Nuovo colore per Aperture
 
     # Classificazione Mosse
-    BRILLANTE: Tuple[int, int, int] = (20, 255, 209)
-    MIGLIORE: Tuple[int, int, int] = (150, 188, 75)
-    OTTIMA: Tuple[int, int, int] = (150, 188, 75)
-    BUONA: Tuple[int, int, int] = (100, 149, 237)
-    IMPRECISIONE: Tuple[int, int, int] = (240, 193, 92)
-    ERRORE: Tuple[int, int, int] = (230, 145, 44)
-    GRAVE: Tuple[int, int, int] = (201, 52, 48)
+    BRILLANTE: tuple[int, int, int] = (20, 255, 209)
+    MIGLIORE: tuple[int, int, int] = (150, 188, 75)
+    OTTIMA: tuple[int, int, int] = (150, 188, 75)
+    BUONA: tuple[int, int, int] = (100, 149, 237)
+    IMPRECISIONE: tuple[int, int, int] = (240, 193, 92)
+    ERRORE: tuple[int, int, int] = (230, 145, 44)
+    GRAVE: tuple[int, int, int] = (201, 52, 48)
 
     # Elementi UI
-    SFONDO_BOTTONE: Tuple[int, int, int] = (60, 60, 60)
-    SFONDO_BOTTONE_HOVER: Tuple[int, int, int] = (80, 80, 80)
+    SFONDO_BOTTONE: tuple[int, int, int] = (60, 60, 60)
+    SFONDO_BOTTONE_HOVER: tuple[int, int, int] = (80, 80, 80)
 
     # Highlights - CORREZIONE VISIBILITÀ
-    HIGHLIGHT_SELECTED: Tuple[int, int, int, int] = (255, 255, 50, 120)
-    HIGHLIGHT_LAST_MOVE: Tuple[int, int, int, int] = (255, 255, 50, 100)
-    HIGHLIGHT_CHECK: Tuple[int, int, int, int] = (200, 50, 50, 180)
-    
+    HIGHLIGHT_SELECTED: tuple[int, int, int, int] = (255, 255, 50, 120)
+    HIGHLIGHT_LAST_MOVE: tuple[int, int, int, int] = (255, 255, 50, 100)
+    HIGHLIGHT_CHECK: tuple[int, int, int, int] = (200, 50, 50, 180)
+
     # FIX 2: AUMENTATA VISIBILITÀ (Alpha da 40 a 140)
-    HIGHLIGHT_LEGAL_MOVE: Tuple[int, int, int, int] = (20, 20, 20, 140) 
-    HIGHLIGHT_LEGAL_CAPTURE: Tuple[int, int, int, int] = (200, 50, 50, 160) 
+    HIGHLIGHT_LEGAL_MOVE: tuple[int, int, int, int] = (20, 20, 20, 140)
+    HIGHLIGHT_LEGAL_CAPTURE: tuple[int, int, int, int] = (200, 50, 50, 160)
 
     # Frecce
-    FRECCIA_MIGLIORE: Tuple[int, int, int, int] = (150, 188, 75, 220)
+    FRECCIA_MIGLIORE: tuple[int, int, int, int] = (150, 188, 75, 220)
 
     # Barra valutazione
-    EVAL_BG: Tuple[int, int, int] = (30, 30, 30)
-    EVAL_DIVIDER:Tuple[int, int, int] = (150, 188, 75)
-    EVAL_FORE: Tuple[int, int, int] = (30, 30, 30)
-    EVAL_BAR_GOOD: Tuple[int, int, int] = (150, 188, 75)
-    EVAL_BAR_BAD: Tuple[int, int, int] = (201, 52, 48)
+    EVAL_BG: tuple[int, int, int] = (30, 30, 30)
+    EVAL_DIVIDER:tuple[int, int, int] = (150, 188, 75)
+    EVAL_FORE: tuple[int, int, int] = (30, 30, 30)
+    EVAL_BAR_GOOD: tuple[int, int, int] = (150, 188, 75)
+    EVAL_BAR_BAD: tuple[int, int, int] = (201, 52, 48)
 
     # Bordo e linee
-    BORDER: Tuple[int, int, int] = (80, 80, 80)
-    DIVIDER: Tuple[int, int, int] = (70, 70, 70)
+    BORDER: tuple[int, int, int] = (80, 80, 80)
+    DIVIDER: tuple[int, int, int] = (70, 70, 70)
 
 COLORS = UIColors()
 
@@ -81,7 +81,7 @@ STOCKFISH_MISSING_MESSAGE = (
 )
 
 
-def resolve_stockfish_path() -> Optional[str]:
+def resolve_stockfish_path() -> str | None:
     """Locate the Stockfish binary.
 
     Resolution order:
@@ -109,7 +109,7 @@ STOCKFISH_PATH = resolve_stockfish_path()
 # --- Configurazione GUI ---
 BOARD_SIZE = 720
 SQUARE_SIZE = BOARD_SIZE // 8
-ANALYSIS_PANEL_WIDTH = 400 
+ANALYSIS_PANEL_WIDTH = 400
 EVAL_BAR_WIDTH = 24
 SCREEN_HEIGHT = BOARD_SIZE
 SCREEN_WIDTH = BOARD_SIZE + EVAL_BAR_WIDTH + ANALYSIS_PANEL_WIDTH
@@ -150,7 +150,7 @@ class StrengthProfile:
     use_uci_elo: bool
     uci_elo: int = UCI_ELO_MIN
     skill_level: int = 20
-    node_limit: Optional[int] = None
+    node_limit: int | None = None
 
     @property
     def description(self) -> str:

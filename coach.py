@@ -27,11 +27,10 @@ import logging
 import os
 import urllib.parse
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 import chess
 
-from analysis import Grade, Judgement
+from analysis import Judgement
 from openings import Opening, OpeningBook, get_book
 from structures import Structure, StructureReport, analyse_structure
 
@@ -48,17 +47,17 @@ class PositionBriefing:
 
     structure_name: str = ""
     summary: str = ""
-    plans_white: List[str] = field(default_factory=list)
-    plans_black: List[str] = field(default_factory=list)
-    good_pieces: List[str] = field(default_factory=list)
-    bad_pieces: List[str] = field(default_factory=list)
-    typical_mistakes: List[str] = field(default_factory=list)
-    traps: List[str] = field(default_factory=list)
-    observations: List[str] = field(default_factory=list)
-    opening: Optional[Opening] = None
+    plans_white: list[str] = field(default_factory=list)
+    plans_black: list[str] = field(default_factory=list)
+    good_pieces: list[str] = field(default_factory=list)
+    bad_pieces: list[str] = field(default_factory=list)
+    typical_mistakes: list[str] = field(default_factory=list)
+    traps: list[str] = field(default_factory=list)
+    observations: list[str] = field(default_factory=list)
+    opening: Opening | None = None
     study_url: str = ""
 
-    def plans_for(self, color: chess.Color) -> List[str]:
+    def plans_for(self, color: chess.Color) -> list[str]:
         return self.plans_white if color == chess.WHITE else self.plans_black
 
     @property
@@ -78,7 +77,7 @@ def wikibooks_url(board: chess.Board) -> str:
         return WIKIBOOKS_ROOT
 
     replay = chess.Board()
-    segments: List[str] = []
+    segments: list[str] = []
     for index, move in enumerate(board.move_stack[:12]):
         san = replay.san(move)
         number = index // 2 + 1
@@ -114,8 +113,8 @@ class Coach:
 
     def __init__(
         self,
-        book: Optional[OpeningBook] = None,
-        library: Optional[PlanLibrary] = None,
+        book: OpeningBook | None = None,
+        library: PlanLibrary | None = None,
     ):
         self.book = book if book is not None else get_book()
         self.library = library if library is not None else PlanLibrary()
@@ -151,9 +150,9 @@ class Coach:
         return briefing
 
     @staticmethod
-    def _observations(board: chess.Board, report: StructureReport) -> List[str]:
+    def _observations(board: chess.Board, report: StructureReport) -> list[str]:
         """Facts read straight off the board. Every line here is arithmetic."""
-        notes: List[str] = []
+        notes: list[str] = []
 
         for color, facts, label in (
             (chess.WHITE, report.white, "White"),
@@ -232,7 +231,7 @@ class Coach:
         board_after: chess.Board,
         briefing: PositionBriefing,
     ) -> str:
-        parts: List[str] = []
+        parts: list[str] = []
         mover = board_before.turn
 
         if board_after.is_checkmate():

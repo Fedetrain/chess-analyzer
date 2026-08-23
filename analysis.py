@@ -31,9 +31,10 @@ any "CAPS" number here would be an invented figure wearing someone else's name.
 from __future__ import annotations
 
 import math
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Sequence
+from typing import TYPE_CHECKING
 
 import chess
 
@@ -125,10 +126,10 @@ class Judgement:
     cp_loss: int = 0               # kept for display; not used for grading
     win_before: float = 50.0
     win_after: float = 50.0
-    best_move: Optional[chess.Move] = None
+    best_move: chess.Move | None = None
     best_san: str = ""
     explanation: str = ""
-    plan: Optional[object] = None  # PositionBriefing, filled in by the coach
+    plan: object | None = None  # PositionBriefing, filled in by the coach
     is_book: bool = False
     opening: str = ""
 
@@ -140,8 +141,8 @@ class Judgement:
 def classify(
     board_before: chess.Board,
     move: chess.Move,
-    analysis_before: "Analysis",
-    analysis_after: "Analysis",
+    analysis_before: Analysis,
+    analysis_after: Analysis,
 ) -> Judgement:
     """Grade *move* by comparing the position before and after it.
 
@@ -195,7 +196,7 @@ class GameAccuracy:
     """Accuracy of a whole game, split by phase."""
 
     overall: float = 0.0
-    by_phase: Dict[str, float] = field(default_factory=dict)
+    by_phase: dict[str, float] = field(default_factory=dict)
     move_count: int = 0
 
 
@@ -204,7 +205,7 @@ def _harmonic_mean(values: Sequence[float]) -> float:
     return len(safe) / sum(1.0 / v for v in safe)
 
 
-def game_accuracy(accuracies: Sequence[float], phases: Optional[Sequence[str]] = None) -> GameAccuracy:
+def game_accuracy(accuracies: Sequence[float], phases: Sequence[str] | None = None) -> GameAccuracy:
     """Aggregate per-move accuracies into a game score.
 
     Lichess averages a volatility-weighted mean with a harmonic mean; the
@@ -220,9 +221,9 @@ def game_accuracy(accuracies: Sequence[float], phases: Optional[Sequence[str]] =
     harmonic = _harmonic_mean(accuracies)
     overall = (arithmetic + harmonic) / 2
 
-    by_phase: Dict[str, float] = {}
+    by_phase: dict[str, float] = {}
     if phases:
-        buckets: Dict[str, List[float]] = {}
+        buckets: dict[str, list[float]] = {}
         for acc, phase in zip(accuracies, phases):
             buckets.setdefault(phase, []).append(acc)
         for phase, vals in buckets.items():

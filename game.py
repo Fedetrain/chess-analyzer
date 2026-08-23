@@ -1,49 +1,57 @@
 # game.py
-import pygame
-import chess
 import os
 import threading
-from typing import Optional, Dict, Any, Tuple, List
 import time
+from typing import Any
+
+import chess
+import pygame
 
 from analysis import Judgement, phase_of
 from coach import Coach
-from openings import get_book
 from config import (
-    SCREEN_WIDTH, SCREEN_HEIGHT, STOCKFISH_PATH, ASSET_PATH,
-    BOARD_SIZE, SQUARE_SIZE, DEFAULT_ELO_INDEX, ELO_LEVELS,
-    PGN_PATH, COLORS, DATA_DIR
+    ASSET_PATH,
+    BOARD_SIZE,
+    DATA_DIR,
+    DEFAULT_ELO_INDEX,
+    ELO_LEVELS,
+    PGN_PATH,
+    SCREEN_HEIGHT,
+    SCREEN_WIDTH,
+    SQUARE_SIZE,
+    STOCKFISH_PATH,
 )
+from drawing import Drawing
+from engine import EMPTY_ANALYSIS, Analysis, EngineWrapper
+from openings import get_book
+from pgn_handler import PGNHandler
 from repertoire import Repertoire
 from trainer import DrillMode, StudySession
-from engine import EMPTY_ANALYSIS, Analysis, EngineWrapper
-from drawing import Drawing
 from ui import UIManager
-from pgn_handler import PGNHandler
-from chess_utils import ChessUtils
+
 
 class AssetManager:
     """Gestisce il caricamento degli assets."""
     def __init__(self):
-        self.piece_images: Dict[str, Optional[pygame.Surface]] = {}
-        self.sounds: Dict[str, Optional[pygame.mixer.Sound]] = {}
+        self.piece_images: dict[str, pygame.Surface | None] = {}
+        self.sounds: dict[str, pygame.mixer.Sound | None] = {}
         self._loaded = False
-    
-    def load_piece_images(self) -> Dict[str, pygame.Surface]:
+
+    def load_piece_images(self) -> dict[str, pygame.Surface]:
         if not self._loaded:
             pieces = ['wP', 'wN', 'wB', 'wR', 'wQ', 'wK', 'bP', 'bN', 'bB', 'bR', 'bQ', 'bK']
             for piece in pieces:
                 path = os.path.join(ASSET_PATH, f"{piece}.png")
                 if os.path.exists(path):
                     self.piece_images[piece] = pygame.transform.smoothscale(
-                        pygame.image.load(path).convert_alpha(), 
+                        pygame.image.load(path).convert_alpha(),
                         (SQUARE_SIZE, SQUARE_SIZE)
                     )
                 else:
                     self.piece_images[piece] = None
             self._loaded = True
         return self.piece_images
-    
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -61,29 +69,29 @@ class Game:
         self.clock = pygame.time.Clock()
         self.asset_manager = AssetManager()
         self.piece_images = self.asset_manager.load_piece_images()
-        
+
         # Game State
         self.board = chess.Board()
-        self.move_history_san: List[str] = []
-        self.selected_square: Optional[int] = None
-        self.dragging_piece: Optional[Tuple[pygame.Surface, pygame.Rect]] = None
-        
+        self.move_history_san: list[str] = []
+        self.selected_square: int | None = None
+        self.dragging_piece: tuple[pygame.Surface, pygame.Rect] | None = None
+
         self.player_color = chess.WHITE
         self.board_orientation = chess.WHITE
-        self.last_move: Optional[chess.Move] = None
+        self.last_move: chess.Move | None = None
         self.current_elo = ELO_LEVELS[DEFAULT_ELO_INDEX]
-        
+
         # Analysis state
         self.current_analysis: Analysis = EMPTY_ANALYSIS
-        self.last_judgement: Optional[Judgement] = None
+        self.last_judgement: Judgement | None = None
         self.coach_text = "Play a move to get feedback."
-        self.accuracies: List[float] = []
-        self.phases: List[str] = []
+        self.accuracies: list[float] = []
+        self.phases: list[str] = []
 
         # Trainer state
         self.training = False
-        self.training_info: Dict[str, Any] = {}
-        self.session: Optional[StudySession] = None
+        self.training_info: dict[str, Any] = {}
+        self.session: StudySession | None = None
         self.question = None
         self.drill_correct = 0
         self.drill_asked = 0
@@ -91,9 +99,9 @@ class Game:
 
         self.game_state = "loading"
         self.status_text = "Starting engine..."
-        
+
         # Components
-        self.engine: Optional[EngineWrapper] = None
+        self.engine: EngineWrapper | None = None
         self.drawing = Drawing(self.screen, self.piece_images)
         self.pgn_handler = PGNHandler()
         self.openings = get_book()
@@ -107,7 +115,7 @@ class Game:
         self.engine_thread = threading.Thread(target=self.init_engine, args=(STOCKFISH_PATH,), daemon=True)
         self.engine_thread.start()
 
-    def init_engine(self, path: Optional[str]) -> None:
+    def init_engine(self, path: str | None) -> None:
         self.engine = EngineWrapper(path, elo=self.current_elo)
         if not self.engine.is_ready:
             self.game_state = "no_engine"
@@ -121,15 +129,15 @@ class Game:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
-                
+
                 # UI Events
                 ui_action = self.ui.handle_event(event)
                 if ui_action: self.handle_ui_action(ui_action)
-                
+
                 # Board Events
                 if not ui_action and self.game_state == "human_turn":
                     self.handle_board_event(event)
-            
+
             self.sync_ui()
             self.drawing.redraw_all(
                 self.board, self.board_orientation, self.last_move,
@@ -174,20 +182,20 @@ class Game:
 
     def handle_ui_action(self, action: str) -> None:
         if action == "new_game": self.reset_game()
-        elif action == "flip": 
+        elif action == "flip":
             self.board_orientation = not self.board_orientation
-            self.drawing.static_board_drawn = False 
-        elif action == "color": 
+            self.drawing.static_board_drawn = False
+        elif action == "color":
             self.player_color = not self.player_color
             self.board_orientation = self.player_color
             self.reset_game()
-            self.drawing.static_board_drawn = False 
+            self.drawing.static_board_drawn = False
         elif action == "train":
             self.toggle_trainer()
         elif action == "undo":
             if not self.training:
                 self.undo_move()
-        elif action == "save_pgn": 
+        elif action == "save_pgn":
             fname = self.pgn_handler.save_game(self.board, PGN_PATH, self.player_color)
             if fname:
                 self.status_text = f"Salvato: {fname}"
@@ -209,19 +217,19 @@ class Game:
                 if self.dragging_piece: self.handle_drag_stop(event.pos)
                 else: self.handle_click(event.pos)
 
-    def get_square_from_pos(self, pos: Tuple[int, int]) -> Optional[int]:
+    def get_square_from_pos(self, pos: tuple[int, int]) -> int | None:
         x, y = pos
         if x > BOARD_SIZE or y > BOARD_SIZE or x < 0 or y < 0: return None
         file = x // SQUARE_SIZE
         rank = 7 - (y // SQUARE_SIZE)
         return chess.square(file, rank) if self.board_orientation == chess.WHITE else chess.square(7 - file, 7 - rank)
 
-    def handle_click(self, pos: Tuple[int, int]) -> None:
+    def handle_click(self, pos: tuple[int, int]) -> None:
         square = self.get_square_from_pos(pos)
-        if square is None: 
+        if square is None:
             self.selected_square = None
             return
-            
+
         if self.selected_square is None:
             piece = self.board.piece_at(square)
             if piece and piece.color == self.board.turn:
@@ -231,7 +239,7 @@ class Game:
             self.attempt_move(move)
             self.selected_square = None
 
-    def handle_drag_start(self, pos: Tuple[int, int]) -> None:
+    def handle_drag_start(self, pos: tuple[int, int]) -> None:
         square = self.get_square_from_pos(pos)
         if square is not None:
             piece = self.board.piece_at(square)
@@ -242,7 +250,7 @@ class Game:
                 rect = img.get_rect(center=pos)
                 self.dragging_piece = (img, rect)
 
-    def handle_drag_stop(self, pos: Tuple[int, int]) -> None:
+    def handle_drag_stop(self, pos: tuple[int, int]) -> None:
         if self.dragging_piece and self.selected_square is not None:
             target = self.get_square_from_pos(pos)
             if target is not None:
@@ -291,9 +299,9 @@ class Game:
 
     def process_ai_turn(
         self,
-        board_before: Optional[chess.Board],
-        human_move: Optional[chess.Move],
-        board_after: Optional[chess.Board],
+        board_before: chess.Board | None,
+        human_move: chess.Move | None,
+        board_after: chess.Board | None,
     ) -> None:
         if not self.engine or not self.engine.is_ready:
             return
@@ -321,7 +329,7 @@ class Game:
         self,
         board_before: chess.Board,
         move: chess.Move,
-        board_after: Optional[chess.Board],
+        board_after: chess.Board | None,
     ) -> None:
         """Grade one human move and hand the result to the coach.
 
@@ -450,9 +458,9 @@ class Game:
         self.update_training_info("Which move does your repertoire play here?")
 
     @staticmethod
-    def _san_history(moves: List[chess.Move]) -> List[str]:
+    def _san_history(moves: list[chess.Move]) -> list[str]:
         board = chess.Board()
-        out: List[str] = []
+        out: list[str] = []
         for move in moves:
             out.append(board.san(move))
             board.push(move)

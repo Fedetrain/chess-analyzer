@@ -1,8 +1,11 @@
 # main.py
-import pygame
 import sys
+
+import pygame
+
+from config import STOCKFISH_MISSING_MESSAGE, STOCKFISH_PATH
 from game import Game
-from config import STOCKFISH_PATH, STOCKFISH_MISSING_MESSAGE
+
 
 def main():
     """Funzione principale per avviare il gioco."""

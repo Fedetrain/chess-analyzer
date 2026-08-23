@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 import chess
 import chess.pgn
@@ -28,7 +27,7 @@ import chess.pgn
 from analysis import GameAccuracy, Judgement, game_accuracy, phase_of
 from coach import Coach
 from openings import Opening
-from repertoire import Repertoire, RepertoireMove
+from repertoire import Repertoire
 
 log = logging.getLogger(__name__)
 
@@ -57,7 +56,7 @@ class ReviewedMove:
     ply: int
     san: str
     color: chess.Color
-    judgement: Optional[Judgement] = None
+    judgement: Judgement | None = None
     in_book: bool = False
 
     @property
@@ -73,20 +72,20 @@ class ReviewedMove:
 class GameReview:
     """The full verdict on a game."""
 
-    moves: List[ReviewedMove] = field(default_factory=list)
-    opening: Optional[Opening] = None
-    deviation: Optional[Deviation] = None
+    moves: list[ReviewedMove] = field(default_factory=list)
+    opening: Opening | None = None
+    deviation: Deviation | None = None
     accuracy: GameAccuracy = field(default_factory=GameAccuracy)
     engine_available: bool = True
     color_reviewed: chess.Color = chess.WHITE
     last_book_ply: int = 0
 
     @property
-    def blunders(self) -> List[ReviewedMove]:
+    def blunders(self) -> list[ReviewedMove]:
         return [m for m in self.moves if m.judgement and m.judgement.grade.name == "BLUNDER"]
 
     @property
-    def mistakes(self) -> List[ReviewedMove]:
+    def mistakes(self) -> list[ReviewedMove]:
         return [
             m for m in self.moves
             if m.judgement and m.judgement.grade.name in ("MISTAKE", "BLUNDER")
@@ -115,24 +114,24 @@ class GameReview:
 class Reviewer:
     """Reviews games, with or without an engine."""
 
-    def __init__(self, engine=None, coach: Optional[Coach] = None, depth: int = 12):
+    def __init__(self, engine=None, coach: Coach | None = None, depth: int = 12):
         self.engine = engine
         self.coach = coach or Coach()
         self.depth = depth
 
     def review_moves(
         self,
-        moves: List[chess.Move],
+        moves: list[chess.Move],
         color: chess.Color = chess.WHITE,
-        rep: Optional[Repertoire] = None,
+        rep: Repertoire | None = None,
     ) -> GameReview:
         """Review a move list, grading only *color*'s moves."""
         engine_ok = self.engine is not None and getattr(self.engine, "is_ready", False)
         review = GameReview(engine_available=engine_ok, color_reviewed=color)
 
         board = chess.Board()
-        accuracies: List[float] = []
-        phases: List[str] = []
+        accuracies: list[float] = []
+        phases: list[str] = []
         still_in_book = True
 
         for ply, move in enumerate(moves):
@@ -190,7 +189,7 @@ class Reviewer:
         self,
         game: chess.pgn.Game,
         color: chess.Color = chess.WHITE,
-        rep: Optional[Repertoire] = None,
+        rep: Repertoire | None = None,
     ) -> GameReview:
         return self.review_moves(list(game.mainline_moves()), color=color, rep=rep)
 
@@ -198,22 +197,22 @@ class Reviewer:
         self,
         path: str,
         color: chess.Color = chess.WHITE,
-        rep: Optional[Repertoire] = None,
-    ) -> List[GameReview]:
-        reviews: List[GameReview] = []
+        rep: Repertoire | None = None,
+    ) -> list[GameReview]:
+        reviews: list[GameReview] = []
         with open(path, encoding="utf-8", errors="replace") as handle:
             while (game := chess.pgn.read_game(handle)) is not None:
                 reviews.append(self.review_game(game, color=color, rep=rep))
         return reviews
 
 
-def suggest_study(review: GameReview) -> List[str]:
+def suggest_study(review: GameReview) -> list[str]:
     """Turn a review into concrete study advice.
 
     Ordered by how much the mistake cost, because that is the order in which
     fixing them pays.
     """
-    advice: List[str] = []
+    advice: list[str] = []
 
     if review.deviation is not None:
         advice.append(

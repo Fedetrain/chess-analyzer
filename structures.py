@@ -23,7 +23,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Set
 
 import chess
 
@@ -52,12 +51,12 @@ class PawnFacts:
     """Everything computable about one side's pawns."""
 
     color: chess.Color
-    files: Set[int] = field(default_factory=set)
-    doubled: List[int] = field(default_factory=list)
-    isolated: List[int] = field(default_factory=list)
-    backward: List[int] = field(default_factory=list)
-    passed: List[chess.Square] = field(default_factory=list)
-    half_open_files: List[int] = field(default_factory=list)
+    files: set[int] = field(default_factory=set)
+    doubled: list[int] = field(default_factory=list)
+    isolated: list[int] = field(default_factory=list)
+    backward: list[int] = field(default_factory=list)
+    passed: list[chess.Square] = field(default_factory=list)
+    half_open_files: list[int] = field(default_factory=list)
     islands: int = 0
     space: int = 0
 
@@ -68,11 +67,11 @@ class StructureReport:
 
     structure: Structure = Structure.UNRESOLVED
     #: For one-sided structures (IQP, Maroczy), who owns the feature.
-    owner: Optional[chess.Color] = None
+    owner: chess.Color | None = None
     white: PawnFacts = field(default_factory=lambda: PawnFacts(chess.WHITE))
     black: PawnFacts = field(default_factory=lambda: PawnFacts(chess.BLACK))
-    outposts: Dict[chess.Color, List[chess.Square]] = field(default_factory=dict)
-    bad_bishop: Dict[chess.Color, bool] = field(default_factory=dict)
+    outposts: dict[chess.Color, list[chess.Square]] = field(default_factory=dict)
+    bad_bishop: dict[chess.Color, bool] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
@@ -82,11 +81,11 @@ class StructureReport:
         return f"{self.structure} ({side})"
 
 
-def _pawn_squares(board: chess.Board, color: chess.Color) -> List[chess.Square]:
+def _pawn_squares(board: chess.Board, color: chess.Color) -> list[chess.Square]:
     return list(board.pieces(chess.PAWN, color))
 
 
-def _files_of(squares: List[chess.Square]) -> List[int]:
+def _files_of(squares: list[chess.Square]) -> list[int]:
     return [chess.square_file(sq) for sq in squares]
 
 
@@ -95,7 +94,7 @@ def _has_pawn_on(board: chess.Board, color: chess.Color, square: chess.Square) -
     return piece is not None and piece.piece_type == chess.PAWN and piece.color == color
 
 
-def _count_islands(files: Set[int]) -> int:
+def _count_islands(files: set[int]) -> int:
     if not files:
         return 0
     islands, previous = 1, min(files)
@@ -145,12 +144,12 @@ def _is_passed(board: chess.Board, square: chess.Square, color: chess.Color) -> 
     return True
 
 
-def _outposts(board: chess.Board, color: chess.Color) -> List[chess.Square]:
+def _outposts(board: chess.Board, color: chess.Color) -> list[chess.Square]:
     """Advanced squares an enemy pawn can never attack again, that we do control.
 
     This is the computable half of "good knight, bad knight".
     """
-    found: List[chess.Square] = []
+    found: list[chess.Square] = []
     ranks = range(3, 6) if color == chess.WHITE else range(2, 5)
     enemy_pawns = board.pieces(chess.PAWN, not color)
 
@@ -230,7 +229,7 @@ def _pawn_facts(board: chess.Board, color: chess.Color) -> PawnFacts:
 # ------------------------------------------------------------- recognisers
 
 
-def _is_carlsbad(board: chess.Board) -> Optional[chess.Color]:
+def _is_carlsbad(board: chess.Board) -> chess.Color | None:
     """White pawn d4, no white c-pawn; black pawn d5 and c-pawn, no black e-pawn.
 
     Arises from the Queen's Gambit Exchange and, by transposition, the Caro-Kann
@@ -258,7 +257,7 @@ def _is_carlsbad(board: chess.Board) -> Optional[chess.Color]:
     return None
 
 
-def _iqp_owner(board: chess.Board) -> Optional[chess.Color]:
+def _iqp_owner(board: chess.Board) -> chess.Color | None:
     for color, square in ((chess.WHITE, chess.D4), (chess.BLACK, chess.D5)):
         files = set(_files_of(_pawn_squares(board, color)))
         if _has_pawn_on(board, color, square) and 2 not in files and 4 not in files:
@@ -266,7 +265,7 @@ def _iqp_owner(board: chess.Board) -> Optional[chess.Color]:
     return None
 
 
-def _hanging_pawns(board: chess.Board) -> Optional[chess.Color]:
+def _hanging_pawns(board: chess.Board) -> chess.Color | None:
     """Pawns on c and d abreast, with no b- or e-pawn to support them."""
     for color, rank in ((chess.WHITE, 3), (chess.BLACK, 4)):
         files = set(_files_of(_pawn_squares(board, color)))
@@ -280,7 +279,7 @@ def _hanging_pawns(board: chess.Board) -> Optional[chess.Color]:
     return None
 
 
-def _maroczy(board: chess.Board) -> Optional[chess.Color]:
+def _maroczy(board: chess.Board) -> chess.Color | None:
     """White pawns on c4 and e4 against a black d-pawn and no black c-pawn."""
     bf = set(_files_of(_pawn_squares(board, chess.BLACK)))
     if (
@@ -301,7 +300,7 @@ def _maroczy(board: chess.Board) -> Optional[chess.Color]:
     return None
 
 
-def _closed_chain(board: chess.Board) -> Optional[chess.Color]:
+def _closed_chain(board: chess.Board) -> chess.Color | None:
     """The French/Advance chain: white e5 and d4 against black d5 and e6."""
     if (
         _has_pawn_on(board, chess.WHITE, chess.E5)

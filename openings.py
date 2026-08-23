@@ -26,9 +26,9 @@ from __future__ import annotations
 import csv
 import logging
 import os
+from collections.abc import Iterator
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Dict, Iterator, List, Optional, Tuple
 
 import chess
 
@@ -76,10 +76,10 @@ def position_key(board: chess.Board) -> str:
     return " ".join(board.fen().split(" ")[:4])
 
 
-def _parse_pgn_moves(pgn: str) -> List[chess.Move]:
+def _parse_pgn_moves(pgn: str) -> list[chess.Move]:
     """Turn an ECO ``pgn`` column ("1. e4 c5 2. Nf3") into a move list."""
     board = chess.Board()
-    moves: List[chess.Move] = []
+    moves: list[chess.Move] = []
     for token in pgn.split():
         if token[0].isdigit() and ("." in token):
             continue
@@ -95,7 +95,7 @@ def _parse_pgn_moves(pgn: str) -> List[chess.Move]:
     return moves
 
 
-def _iter_rows(directory: str) -> Iterator[Tuple[str, str, str]]:
+def _iter_rows(directory: str) -> Iterator[tuple[str, str, str]]:
     for letter in "abcde":
         path = os.path.join(directory, f"{letter}.tsv")
         if not os.path.exists(path):
@@ -114,7 +114,7 @@ class OpeningBook:
     """The ECO corpus, indexed by position."""
 
     def __init__(self, directory: str = ECO_DIR):
-        self.by_epd: Dict[str, Opening] = {}
+        self.by_epd: dict[str, Opening] = {}
         self._load(directory)
 
     def _load(self, directory: str) -> None:
@@ -140,11 +140,11 @@ class OpeningBook:
 
     # ------------------------------------------------------------- lookups
 
-    def lookup(self, board: chess.Board) -> Optional[Opening]:
+    def lookup(self, board: chess.Board) -> Opening | None:
         """Exact match for the position currently on *board*."""
         return self.by_epd.get(position_key(board))
 
-    def identify(self, board: chess.Board) -> Optional[Opening]:
+    def identify(self, board: chess.Board) -> Opening | None:
         """The most specific opening this game has reached.
 
         Walks the move stack backwards, so a game that has already left book
@@ -169,13 +169,13 @@ class OpeningBook:
             return "Out of book"
         return str(opening)
 
-    def continuations(self, board: chess.Board) -> List[Tuple[chess.Move, Opening]]:
+    def continuations(self, board: chess.Board) -> list[tuple[chess.Move, Opening]]:
         """Book moves from this position that lead to a named opening.
 
         This is what lets the trainer offer real theory moves without a network
         call, and what gives the repertoire builder its suggestions.
         """
-        found: List[Tuple[chess.Move, Opening]] = []
+        found: list[tuple[chess.Move, Opening]] = []
         for move in board.legal_moves:
             board.push(move)
             opening = self.lookup(board)
@@ -184,7 +184,7 @@ class OpeningBook:
                 found.append((move, opening))
         return found
 
-    def search(self, text: str, limit: int = 25) -> List[Opening]:
+    def search(self, text: str, limit: int = 25) -> list[Opening]:
         """Case-insensitive substring search over opening names."""
         needle = text.strip().lower()
         if not needle:
@@ -193,7 +193,7 @@ class OpeningBook:
         hits.sort(key=lambda o: (len(o.name), o.name))
         return hits[:limit]
 
-    def family_line(self, family: str) -> List[Opening]:
+    def family_line(self, family: str) -> list[Opening]:
         """Every entry belonging to one opening family."""
         return sorted(
             (o for o in self.by_epd.values() if o.family.lower() == family.lower()),

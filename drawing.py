@@ -1,25 +1,24 @@
 # drawing.py
-import pygame
-import chess
 import math
-from typing import Dict, Optional, Tuple, Any, List
-from config import (
-    BOARD_SIZE, SQUARE_SIZE, EVAL_BAR_WIDTH, EVAL_CAP,
-    COLORS, PANEL_X, SCREEN_HEIGHT
-)
+
+import chess
+import pygame
+
+from config import BOARD_SIZE, COLORS, EVAL_BAR_WIDTH, EVAL_CAP, PANEL_X, SCREEN_HEIGHT, SQUARE_SIZE
+
 
 class Drawing:
     """Rendering engine ottimizzato con nuovo stile."""
-    
-    def __init__(self, screen: pygame.Surface, piece_images: Dict[str, pygame.Surface]):
+
+    def __init__(self, screen: pygame.Surface, piece_images: dict[str, pygame.Surface]):
         self.screen = screen
         self.piece_images = piece_images
-        self.dirty_rects: List[pygame.Rect] = []
-        
+        self.dirty_rects: list[pygame.Rect] = []
+
         # Surfaces
         self.highlight_surf = pygame.Surface((BOARD_SIZE, BOARD_SIZE), pygame.SRCALPHA)
         self.arrow_surf = pygame.Surface((BOARD_SIZE, BOARD_SIZE), pygame.SRCALPHA)
-        
+
         try:
             self.font = pygame.font.SysFont("Segoe UI", 12, bold=True)
         except:
@@ -42,7 +41,7 @@ class Drawing:
                 else:
                     x, y = (7-f)*SQUARE_SIZE, (7-r)*SQUARE_SIZE
                 pygame.draw.rect(self.screen, color, (x,y,SQUARE_SIZE,SQUARE_SIZE))
-        
+
         # Coordinate
         coords = "abcdefgh" if orientation == chess.WHITE else "hgfedcba"
         nums = "87654321" if orientation == chess.WHITE else "12345678"
@@ -56,8 +55,8 @@ class Drawing:
             txt = self.font.render(coords[i], True, col)
             self.screen.blit(txt, (i*SQUARE_SIZE + SQUARE_SIZE - 10, BOARD_SIZE - 16))
 
-    def draw_pieces(self, board: chess.Board, orientation: int, 
-                   dragging: Optional[Tuple] = None, selected: Optional[int] = None):
+    def draw_pieces(self, board: chess.Board, orientation: int,
+                   dragging: tuple | None = None, selected: int | None = None):
         drag_sq = selected if dragging else None
         for sq in chess.SQUARES:
             if sq == drag_sq: continue
@@ -71,13 +70,13 @@ class Drawing:
 
     def draw_highlights(self, board, orientation, last_move, selected, dragging):
         self.highlight_surf.fill((0,0,0,0))
-        
+
         if last_move:
             for sq in [last_move.from_square, last_move.to_square]:
                 r = self.get_rect(sq, orientation)
                 pygame.draw.rect(self.highlight_surf, COLORS.HIGHLIGHT_LAST_MOVE, r)
                 self.mark_dirty(r)
-                
+
         if board.is_check():
             if k := board.king(board.turn):
                 r = self.get_rect(k, orientation)
@@ -88,7 +87,7 @@ class Drawing:
             r = self.get_rect(selected, orientation)
             pygame.draw.rect(self.highlight_surf, COLORS.HIGHLIGHT_SELECTED, r)
             self.mark_dirty(r)
-            
+
             for m in board.legal_moves:
                 if m.from_square == selected:
                     dest = self.get_rect(m.to_square, orientation)
@@ -141,14 +140,14 @@ class Drawing:
             (BOARD_SIZE + EVAL_BAR_WIDTH, BOARD_SIZE // 2),
         )
 
-    def draw_arrow(self, start: Tuple[int,int], end: Tuple[int,int], color):
+    def draw_arrow(self, start: tuple[int, int], end: tuple[int, int], color):
+        """Draw a line from *start* to *end* with an arrowhead at the end."""
         pygame.draw.line(self.arrow_surf, color, start, end, 6)
-        # Calcolo triangolo punta
-        angle = math.atan2(start[1]-end[1], end[0]-start[0]) + math.pi/2
-        p1 = (end[0] + 15*math.sin(angle), end[1] + 15*math.cos(angle))
-        p2 = (end[0] + 15*math.sin(angle+2.5), end[1] + 15*math.cos(angle+2.5))
-        p3 = (end[0] + 15*math.sin(angle-2.5), end[1] + 15*math.cos(angle-2.5))
-        pygame.draw.polygon(self.arrow_surf, color, [end, p2, p3])
+
+        angle = math.atan2(start[1] - end[1], end[0] - start[0]) + math.pi / 2
+        left = (end[0] + 15 * math.sin(angle + 2.5), end[1] + 15 * math.cos(angle + 2.5))
+        right = (end[0] + 15 * math.sin(angle - 2.5), end[1] + 15 * math.cos(angle - 2.5))
+        pygame.draw.polygon(self.arrow_surf, color, [end, left, right])
 
     def draw_best_move(self, orientation, analysis):
         self.arrow_surf.fill((0, 0, 0, 0))
@@ -174,12 +173,12 @@ class Drawing:
         self.draw_pieces(board, orientation, dragging, selected)
         self.draw_eval_bar(analysis, orientation)
         self.draw_best_move(orientation, analysis)
-        
+
         # UI Panel
         ui_rect = pygame.Rect(PANEL_X, 0, SCREEN_HEIGHT, SCREEN_HEIGHT) # W è gestita in ui
         self.mark_dirty(ui_rect)
         ui.draw(self.screen, board)
-        
+
         if dragging:
             self.screen.blit(dragging[0], dragging[1])
             self.mark_dirty(dragging[1])

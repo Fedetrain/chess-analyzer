@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import chess
 import chess.engine
@@ -54,8 +54,8 @@ class MoveCandidate:
     move: chess.Move
     score_white: int          # centipawns, White's point of view, mates projected
     score_relative: int       # centipawns, side-to-move's point of view
-    pv: List[chess.Move] = field(default_factory=list)
-    mate_in: Optional[int] = None
+    pv: list[chess.Move] = field(default_factory=list)
+    mate_in: int | None = None
 
     @property
     def uci(self) -> str:
@@ -72,12 +72,12 @@ class Analysis:
 
     fen: str
     depth: int
-    candidates: List[MoveCandidate] = field(default_factory=list)
+    candidates: list[MoveCandidate] = field(default_factory=list)
     score_white: int = 0
-    mate_in: Optional[int] = None
+    mate_in: int | None = None
 
     @property
-    def best(self) -> Optional[MoveCandidate]:
+    def best(self) -> MoveCandidate | None:
         return self.candidates[0] if self.candidates else None
 
     @property
@@ -101,9 +101,9 @@ class EngineWrapper:
     by ``self._lock`` to keep a slider drag from interleaving with a search.
     """
 
-    def __init__(self, path: Optional[str], elo: int = 1500):
+    def __init__(self, path: str | None, elo: int = 1500):
         self._lock = threading.RLock()
-        self._engine: Optional[chess.engine.SimpleEngine] = None
+        self._engine: chess.engine.SimpleEngine | None = None
         self.analysis_cache = AnalysisCache(max_size=200, timeout_seconds=60)
         self.engine_name = "none"
         self.current_elo = elo
@@ -155,7 +155,7 @@ class EngineWrapper:
             return
 
         profile = strength_for_elo(elo)
-        opts: Dict[str, Any] = {}
+        opts: dict[str, Any] = {}
 
         if profile.use_uci_elo and self._supported("UCI_Elo"):
             opts["UCI_LimitStrength"] = True
@@ -198,7 +198,7 @@ class EngineWrapper:
             except Exception:  # noqa: BLE001
                 pass
 
-    def __enter__(self) -> "EngineWrapper":
+    def __enter__(self) -> EngineWrapper:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -230,7 +230,7 @@ class EngineWrapper:
         if isinstance(infos, dict):        # multipv=None collapses to a single dict
             infos = [infos]
 
-        candidates: List[MoveCandidate] = []
+        candidates: list[MoveCandidate] = []
         for info in infos:
             pv = info.get("pv") or []
             score = info.get("score")
@@ -264,7 +264,7 @@ class EngineWrapper:
 
     # ------------------------------------------------------------------- play
 
-    def play(self, board: chess.Board, depth: int = DEPTH_FAST_ANALYSIS) -> Optional[chess.Move]:
+    def play(self, board: chess.Board, depth: int = DEPTH_FAST_ANALYSIS) -> chess.Move | None:
         """Ask the engine for a move at the configured strength."""
         if not self._engine:
             return None
