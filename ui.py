@@ -24,6 +24,8 @@ class UIManager:
         self.opening_name = ""
         self.accuracy = 0.0
         self.player_color: bool = chess.WHITE
+        self.training = False
+        self.training_info: Dict[str, Any] = {}
 
         # FIX ELO Slider State
         self.current_elo = ELO_LEVELS[DEFAULT_ELO_INDEX]
@@ -53,28 +55,26 @@ class UIManager:
             self.fonts = {k: pygame.font.Font(None, s) for k,s in [('title',30), ('header',24), ('body',20), ('small',18), ('moves',18), ('coach',18), ('opening',22)]}
 
     def init_layout(self):
-        """Layout ricalcolato per includere il box Apertura"""
         x = PANEL_X + self.panel_padding
         w = ANALYSIS_PANEL_WIDTH - (2 * self.panel_padding)
-        y = SCREEN_HEIGHT - 70
-        
-        # Bottoni Navigazione (Fondo)
+        y = SCREEN_HEIGHT - 60
+
         btn_w = (w - 10) // 2
         self.ui_rects["undo"] = pygame.Rect(x, y, btn_w, self.button_height)
         self.ui_rects["new_game"] = pygame.Rect(x + btn_w + 10, y, btn_w, self.button_height)
-        
-        y -= 50
+
+        y -= 46
         self.ui_rects["flip"] = pygame.Rect(x, y, btn_w, self.button_height)
         self.ui_rects["color"] = pygame.Rect(x + btn_w + 10, y, btn_w, self.button_height)
-        
-        y -= 50
-        self.ui_rects["save_pgn"] = pygame.Rect(x, y, w, self.button_height)
-        
-        # Slider ELO
-        y_slider = y - 50
+
+        y -= 46
+        self.ui_rects["save_pgn"] = pygame.Rect(x, y, btn_w, self.button_height)
+        self.ui_rects["train"] = pygame.Rect(x + btn_w + 10, y, btn_w, self.button_height)
+
+        y_slider = y - 44
         self.ui_rects["slider_track"] = pygame.Rect(x, y_slider, w, 8)
-        # Il knob è logico, non fisico qui
-        self.ui_rects["slider_knob"] = pygame.Rect(x, y_slider - 8, 20, 24) 
+        # The knob is logical, not a hit target: the whole track is clickable.
+        self.ui_rects["slider_knob"] = pygame.Rect(x, y_slider - 8, 20, 24)
 
     def handle_event(self, event) -> Optional[str]:
         """Gestione eventi ottimizzata per fluidità dello slider.
@@ -136,7 +136,9 @@ class UIManager:
                      player_color: bool,
                      move_history_san: List[str],
                      opening_name: str,
-                     accuracy: float) -> None:
+                     accuracy: float,
+                     training: bool = False,
+                     training_info: Optional[Dict[str, Any]] = None) -> None:
         """Mirror the game's state into the UI. The UI owns no game state.
 
         Explicit assignments rather than ``self.__dict__.update(**kwargs)``: a
@@ -152,6 +154,8 @@ class UIManager:
         self.move_history_san = move_history_san
         self.opening_name = opening_name
         self.accuracy = accuracy
+        self.training = training
+        self.training_info = training_info or {}
 
     def draw(self, screen: pygame.Surface, board: chess.Board):
         pygame.draw.rect(screen, COLORS.PANEL, (PANEL_X, 0, ANALYSIS_PANEL_WIDTH, SCREEN_HEIGHT))
@@ -172,12 +176,45 @@ class UIManager:
         self.draw_coach_bubble(screen, x, y, w)
         y += 128
 
-        self.draw_technical_analysis(screen, x, y, w)
-        y += 78
-
-        self.draw_move_history(screen, x, y, w)
+        if self.training:
+            self.draw_trainer_panel(screen, x, y, w)
+        else:
+            self.draw_technical_analysis(screen, x, y, w)
+            y += 78
+            self.draw_move_history(screen, x, y, w)
 
         self.draw_controls(screen)
+
+    def draw_trainer_panel(self, screen, x, y, w):
+        """Replace the engine panel with drill progress while training.
+
+        In a drill the engine evaluation is not the point -- whether you knew
+        the move is -- so the panel shows the scheduler's state instead.
+        """
+        info = self.training_info
+        screen.blit(
+            self.fonts['header'].render("Repertoire trainer", True, COLORS.TESTO_ACCENT), (x, y)
+        )
+        y += 28
+
+        rows = [
+            ("Scheduler", info.get("scheduler", "-")),
+            ("Due now", info.get("due_now", 0)),
+            ("Cards", info.get("total_cards", 0)),
+            ("This session", f"{info.get('correct', 0)}/{info.get('asked', 0)}"),
+        ]
+        for label, value in rows:
+            screen.blit(
+                self.fonts['small'].render(f"{label}: {value}", True, COLORS.TESTO_SEC), (x, y)
+            )
+            y += 18
+
+        y += 8
+        prompt = info.get("prompt", "")
+        if prompt:
+            self._draw_wrapped_text(
+                screen, prompt, x, y, w, self.fonts['coach'], max_lines=4
+            )
 
     def draw_info_box(self, screen, x, y, w, label, value, color):
         """Disegna un box informativo (usato per le aperture)."""
@@ -361,15 +398,26 @@ class UIManager:
         
         # Buttons
         mp = pygame.mouse.get_pos()
-        for name in ["undo", "new_game", "flip", "color", "save_pgn"]:
-            label_txt = name.replace("_", " ").title()
-            self.draw_btn(screen, label_txt, self.ui_rects[name], mp)
+        labels = {
+            "undo": "Undo",
+            "new_game": "New Game",
+            "flip": "Flip",
+            "color": "Colour",
+            "save_pgn": "Save PGN",
+            "train": "Exit Trainer" if self.training else "Trainer",
+        }
+        for name, label in labels.items():
+            active = name == "train" and self.training
+            self.draw_btn(screen, label, self.ui_rects[name], mp, active=active)
 
-    def draw_btn(self, screen, text, rect, mouse_pos):
+    def draw_btn(self, screen, text, rect, mouse_pos, active: bool = False):
         hover = rect.collidepoint(mouse_pos)
-        col = COLORS.SFONDO_BOTTONE_HOVER if hover else COLORS.SFONDO_BOTTONE
+        if active:
+            col = COLORS.MIGLIORE
+        else:
+            col = COLORS.SFONDO_BOTTONE_HOVER if hover else COLORS.SFONDO_BOTTONE
         pygame.draw.rect(screen, col, rect, border_radius=6)
-        
+
         txt_surf = self.fonts['body'].render(text, True, COLORS.TESTO)
         txt_rect = txt_surf.get_rect(center=rect.center)
         screen.blit(txt_surf, txt_rect)

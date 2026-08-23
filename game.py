@@ -12,8 +12,10 @@ from openings import get_book
 from config import (
     SCREEN_WIDTH, SCREEN_HEIGHT, STOCKFISH_PATH, ASSET_PATH,
     BOARD_SIZE, SQUARE_SIZE, DEFAULT_ELO_INDEX, ELO_LEVELS,
-    PGN_PATH, COLORS
+    PGN_PATH, COLORS, DATA_DIR
 )
+from repertoire import Repertoire
+from trainer import DrillMode, StudySession
 from engine import EMPTY_ANALYSIS, Analysis, EngineWrapper
 from drawing import Drawing
 from ui import UIManager
@@ -77,6 +79,15 @@ class Game:
         self.coach_text = "Play a move to get feedback."
         self.accuracies: List[float] = []
         self.phases: List[str] = []
+
+        # Trainer state
+        self.training = False
+        self.training_info: Dict[str, Any] = {}
+        self.session: Optional[StudySession] = None
+        self.question = None
+        self.drill_correct = 0
+        self.drill_asked = 0
+        self.retry_pending = False
 
         self.game_state = "loading"
         self.status_text = "Starting engine..."
@@ -142,6 +153,8 @@ class Game:
             move_history_san=self.move_history_san,
             opening_name=self.opening_name,
             accuracy=self.session_accuracy,
+            training=self.training,
+            training_info=self.training_info,
         )
 
     def shutdown(self) -> None:
@@ -169,8 +182,11 @@ class Game:
             self.board_orientation = self.player_color
             self.reset_game()
             self.drawing.static_board_drawn = False 
+        elif action == "train":
+            self.toggle_trainer()
         elif action == "undo":
-            self.undo_move()
+            if not self.training:
+                self.undo_move()
         elif action == "save_pgn": 
             fname = self.pgn_handler.save_game(self.board, PGN_PATH, self.player_color)
             if fname:
@@ -245,6 +261,11 @@ class Game:
 
     def attempt_move(self, move: chess.Move) -> None:
         if move not in self.board.legal_moves:
+            self.selected_square = None
+            return
+
+        if self.training:
+            self.handle_drill_move(move)
             self.selected_square = None
             return
 
@@ -334,8 +355,11 @@ class Game:
         def analyze():
             board_snapshot = self.board.copy()
             data = self.engine.analyse(board_snapshot)
-            # Only publish if the board still holds the analysed position.
-            if self.board.fen() == data.fen:
+            # Only publish if the board still holds the analysed position, and
+            # only if we are still playing: a search started before the user
+            # entered the trainer would otherwise land afterwards and overwrite
+            # the drill's own status line.
+            if self.board.fen() == data.fen and not self.training:
                 self.current_analysis = data
                 if self.game_state != "game_over":
                     self.game_state = "human_turn"
@@ -352,6 +376,188 @@ class Game:
             self.status_text = f"Checkmate - {winner} wins"
         else:
             self.status_text = f"Game over: {self.board.result()}"
+
+    # ------------------------------------------------------------- trainer
+
+    def toggle_trainer(self) -> None:
+        """Enter or leave repertoire drilling."""
+        if self.training:
+            self.training = False
+            self.question = None
+            self.retry_pending = False
+            self.reset_game()
+            self.status_text = "Back to playing."
+            return
+
+        rep_path = os.path.join(
+            DATA_DIR,
+            "repertoire_white.json" if self.player_color == chess.WHITE else "repertoire_black.json",
+        )
+        if not os.path.exists(rep_path):
+            self.coach_text = (
+                "No repertoire found. Build one first, e.g.\n"
+                "python -m tools.study build --color white --line \"e4 e5 Nf3\""
+            )
+            self.status_text = "No repertoire to train"
+            return
+
+        try:
+            rep = Repertoire.load(rep_path)
+        except (OSError, ValueError, KeyError) as exc:
+            self.coach_text = f"Could not read the repertoire: {exc}"
+            return
+
+        if not rep.own_moves:
+            self.coach_text = "That repertoire has no moves of your own to drill."
+            return
+
+        study_path = os.path.join(
+            DATA_DIR,
+            "study_white.json" if self.player_color == chess.WHITE else "study_black.json",
+        )
+        self.session = StudySession(rep, path=study_path)
+        self.training = True
+        self.drill_correct = self.drill_asked = 0
+        self.last_judgement = None
+        self.next_drill()
+
+    def next_drill(self) -> None:
+        """Load the next due position, or report that the queue is empty."""
+        if not self.session:
+            return
+
+        self.retry_pending = False
+        self.question = self.session.next_question(mode=DrillMode.WHOLE_LINE)
+
+        if self.question is None:
+            self.status_text = "Nothing due - all caught up"
+            self.coach_text = "Every position in this repertoire is scheduled for later."
+            self.board = chess.Board()
+            self.move_history_san = []
+            self.last_move = None
+            self.update_training_info("")
+            return
+
+        self.board = self.question.board.copy()
+        self.move_history_san = self._san_history(self.question.line)
+        self.last_move = self.board.peek() if self.board.move_stack else None
+        self.board_orientation = self.player_color
+        self.selected_square = None
+        self.game_state = "human_turn"
+        self.status_text = "Your move (from the repertoire)"
+        self.coach_text = "Play the move your repertoire says. Take your time."
+        self.current_analysis = EMPTY_ANALYSIS
+        self.update_training_info("Which move does your repertoire play here?")
+
+    @staticmethod
+    def _san_history(moves: List[chess.Move]) -> List[str]:
+        board = chess.Board()
+        out: List[str] = []
+        for move in moves:
+            out.append(board.san(move))
+            board.push(move)
+        return out
+
+    def update_training_info(self, prompt: str) -> None:
+        if not self.session:
+            return
+        progress = self.session.progress()
+        self.training_info = {
+            "scheduler": progress["scheduler"],
+            "due_now": progress["due_now"],
+            "total_cards": progress["total_cards"],
+            "correct": self.drill_correct,
+            "asked": self.drill_asked,
+            "prompt": prompt,
+        }
+
+    def handle_drill_move(self, move: chess.Move) -> None:
+        """Check a drilled move, and on a miss show why it fails."""
+        if not (self.session and self.question):
+            return
+
+        if self.retry_pending:
+            # The student is replaying the line after a miss.
+            if move.uci() == self.question.expected.uci:
+                self.board.push(move)
+                self.last_move = move
+                self.move_history_san.append(self.question.expected.san)
+                self.coach_text = "Right. That is the move."
+                self.status_text = "Correct - next position"
+                self.next_drill()
+            else:
+                self.coach_text = f"Not yet. The move is {self.question.expected.san}."
+            return
+
+        correct, _ = self.session.answer(self.question, move)
+        self.drill_asked += 1
+
+        board_before = self.question.board.copy()
+        expected = self.question.expected
+
+        if correct:
+            self.drill_correct += 1
+            self.board.push(move)
+            self.last_move = move
+            self.move_history_san.append(expected.san)
+
+            after = board_before.copy()
+            after.push(expected.move)
+            briefing = self.coach.brief(after)
+            plans = briefing.plans_for(board_before.turn)
+            self.coach_text = (
+                f"Correct: {expected.san}. "
+                + (f"Idea: {plans[0]}" if plans else "")
+            )
+            self.status_text = "Correct"
+            self.update_training_info("")
+            threading.Thread(target=self._advance_after_correct, daemon=True).start()
+        else:
+            self.status_text = "Not the repertoire move"
+            self.coach_text = self._refutation(board_before, move, expected)
+            self.retry_pending = True
+            self.update_training_info(f"Play {expected.san} to continue.")
+
+    def _advance_after_correct(self) -> None:
+        """Play the opponent's reply, then pose the next question."""
+        time.sleep(0.6)
+        reply = self.session.opponent_reply(self.board) if self.session else None
+        if reply is not None and reply in self.board.legal_moves:
+            self.move_history_san.append(self.board.san(reply))
+            self.board.push(reply)
+            self.last_move = reply
+            time.sleep(0.4)
+        self.next_drill()
+
+    def _refutation(self, board_before, played, expected) -> str:
+        """Explain why the played move is not the repertoire move.
+
+        With an engine available this is a real refutation: what the opponent
+        gets to do about it. Without one it still names the expected move, and
+        says the engine is unavailable rather than bluffing.
+        """
+        try:
+            san_played = board_before.san(played)
+        except (ValueError, AssertionError):
+            san_played = played.uci()
+
+        base = f"You played {san_played}; the repertoire move is {expected.san}."
+        if expected.comment:
+            base += f" {expected.comment}"
+
+        if not (self.engine and self.engine.is_ready):
+            return base + " (No engine configured, so no refutation to show.)"
+
+        after = board_before.copy()
+        after.push(played)
+        analysis = self.engine.analyse(after, depth=12)
+        if analysis.best is None:
+            return base
+
+        punish = after.san(analysis.best.move)
+        mover = board_before.turn
+        cp = analysis.score_white if mover == chess.WHITE else -analysis.score_white
+        return f"{base} The refutation is {punish}, leaving you at {cp / 100:+.2f}."
 
     def reset_game(self) -> None:
         self.board.reset()
