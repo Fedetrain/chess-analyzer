@@ -1,0 +1,10 @@
+# Chess Analyzer - runtime dependencies
+#
+# The Stockfish *engine binary* is NOT a Python dependency and is not
+# redistributed here (it is GPLv3). Download it from
+# https://stockfishchess.org/download/ and expose it via the
+# STOCKFISH_PATH environment variable or on your PATH.
+
+pygame>=2.5.0
+chess>=1.10.0
+stockfish>=3.28.0
