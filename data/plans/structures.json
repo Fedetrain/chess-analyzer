@@ -1,0 +1,208 @@
+{
+  "_about": {
+    "purpose": "Typical plans keyed by PAWN STRUCTURE, not by opening name. One entry covers every ECO code that reaches the structure.",
+    "provenance": "Hand-authored from standard positional chess literature (Pachman, Soltis 'Pawn Structure Chess', Watson). This is curated human knowledge, NOT a downloaded data set and NOT LLM-generated at runtime -- see SOTA.md 2.5 for why no open data set of opening plans exists.",
+    "owner_semantics": "'owner' is the side that owns the named feature: the IQP holder, the side playing the minority attack, the side with the bind."
+  },
+
+  "Carlsbad": {
+    "summary": "White has traded the c-pawn for Black's e-pawn. The centre is fixed: White d4 against Black d5, Black's c-pawn faces a half-open c-file for White.",
+    "owner_plans": [
+      "The minority attack: play b4-b5, trading b5xc6 to leave Black with a backward c-pawn on a half-open file.",
+      "Prepare it with Qc2, Rab1 and a4 before committing the b-pawn.",
+      "Alternatively play in the centre with f3 and e4, since Black's pieces are often committed to the queenside."
+    ],
+    "opponent_plans": [
+      "Counterattack on the kingside, where you hold the extra central pawn and more space.",
+      "Play for the ...c5 break to free the position before the minority attack lands.",
+      "Meet b4-b5 with ...a6 or ...c6xb5 followed by piece pressure down the c-file."
+    ],
+    "good_pieces": [
+      "The owner's light-squared bishop on f5/g4 or the knight heading to e5.",
+      "For the defender, a knight on e4 is a fine blockader."
+    ],
+    "bad_pieces": [
+      "The defender's queen bishop is often passive behind the d5 pawn.",
+      "A knight on c6 can become a target once the minority attack lands."
+    ],
+    "typical_mistakes": [
+      "Launching b4-b5 before the rooks and queen support it, so the pawn is simply lost.",
+      "As the defender, allowing the c-pawn to become backward without generating kingside play in return."
+    ],
+    "traps": [
+      "After an early ...Ne4 the defender must be sure the knight cannot be chased with f3 and then punished on the e-file."
+    ]
+  },
+
+  "Isolated queen's pawn": {
+    "summary": "One side holds a d-pawn with no neighbours. It grants space, two open files and active pieces now, and becomes a weakness once pieces come off.",
+    "owner_plans": [
+      "Play for the d4-d5 (or ...d5-d4) break, which liquidates the weakness at the best moment.",
+      "Attack: the isolated pawn buys the e5 and c5 outposts and open c- and e-files for the rooks.",
+      "Keep pieces on. Every exchange helps the blockader, so avoid trading queens.",
+      "Aim the light-squared bishop at h7 and lift a rook to the third rank."
+    ],
+    "opponent_plans": [
+      "Blockade the pawn with a knight on the square directly in front of it.",
+      "Trade pieces. The endgame is where the isolated pawn is simply weak.",
+      "Pile up on the pawn with rooks and queen once it can no longer advance."
+    ],
+    "good_pieces": [
+      "For the owner: knights on e5/c5 and both bishops pointing at the enemy king.",
+      "For the defender: the blockading knight in front of the pawn is the best piece on the board."
+    ],
+    "bad_pieces": [
+      "The owner's rooks are poor if they end up defending the pawn instead of attacking."
+    ],
+    "typical_mistakes": [
+      "The owner trading into an endgame, converting dynamic play into a static weakness.",
+      "The defender grabbing material on the queenside while the attack arrives on the kingside.",
+      "Pushing the isolated pawn as an attack rather than as a liberating break."
+    ],
+    "traps": [
+      "The classic sacrifice on h7 works exactly when the defender has removed a kingside defender to blockade."
+    ]
+  },
+
+  "Hanging pawns": {
+    "summary": "Pawns abreast on the c- and d-files with no neighbours. They control key central squares while they stand, and become two weaknesses the moment one has to advance.",
+    "owner_plans": [
+      "Keep them abreast as long as possible and use the space they grant.",
+      "Advance one at the right moment (usually d5 or c5) to open lines while the pieces are best placed."
+    ],
+    "opponent_plans": [
+      "Provoke one to advance, then occupy the hole the advance leaves behind.",
+      "Pressure both on the half-open files and force a concession."
+    ],
+    "good_pieces": ["Pieces behind the pawns, ready to support a break."],
+    "bad_pieces": ["Any piece tied to passively defending one of the two pawns."],
+    "typical_mistakes": ["Advancing a hanging pawn without a concrete follow-up, creating a permanent hole."],
+    "traps": []
+  },
+
+  "Maroczy bind": {
+    "summary": "Pawns on c4 and e4 clamp the d5 square. The bound side has less space but a solid position and one clear freeing break.",
+    "owner_plans": [
+      "Restrain. Avoid unnecessary trades, since each exchange eases the cramped side.",
+      "Build up slowly with Be3, Rc1, f3, and only then expand.",
+      "Meet the ...b5 break with careful preparation, never with panic."
+    ],
+    "opponent_plans": [
+      "Fight for the freeing breaks ...b5 and ...d5, which are the whole point of the position.",
+      "Trade minor pieces: a cramped position improves with every exchange.",
+      "Use the half-open c-file for pressure against c4."
+    ],
+    "good_pieces": ["The binding side's dark-squared bishop and any knight reaching d5."],
+    "bad_pieces": ["The bound side's pieces without squares, especially a passive bishop on e7."],
+    "typical_mistakes": ["Sitting passively as the bound side and never fighting for a break."],
+    "traps": []
+  },
+
+  "Closed pawn chain": {
+    "summary": "Interlocking chains fix the centre. Play flows to the wings: each side attacks the base of the opposing chain.",
+    "owner_plans": [
+      "Attack on the side where your chain points, typically the kingside, with f4-f5.",
+      "Gain space and restrict the defender's counterplay before opening a file."
+    ],
+    "opponent_plans": [
+      "Strike at the base of the chain with ...c5 (and later ...f6), where your own chain points.",
+      "Solve the problem of the queen bishop, the piece the structure hems in most."
+    ],
+    "good_pieces": ["Knights routed to the strong square in front of the enemy chain's base."],
+    "bad_pieces": ["The defender's light-squared bishop, buried behind its own pawns."],
+    "typical_mistakes": [
+      "Playing on the wrong wing: attacking where your chain does not point.",
+      "Releasing the tension in the centre too early and handing the opponent open lines."
+    ],
+    "traps": []
+  },
+
+  "King's Indian chain": {
+    "summary": "The centre is locked by d5/e4 against e5/d6. Both sides attack on opposite wings and speed matters more than material.",
+    "owner_plans": [
+      "Play on the queenside with c4-c5, opening the c-file where your space advantage lies.",
+      "Do not be distracted by the kingside: race, and count tempi rather than pawns."
+    ],
+    "opponent_plans": [
+      "Attack on the kingside with ...f5, ...f4 and ...g5-g4, aiming the pieces at the king.",
+      "Reroute the f6 knight so the f-pawn can advance."
+    ],
+    "good_pieces": ["The dark-squared bishop on g7, once the centre opens or the e5 pawn advances."],
+    "bad_pieces": ["Any piece defending on the wrong wing while the other side races."],
+    "typical_mistakes": ["Playing slowly. In mutual-attack structures a lost tempo is worth more than a pawn."],
+    "traps": []
+  },
+
+  "Open Sicilian": {
+    "summary": "White has traded the d-pawn for Black's c-pawn. Each side gets a half-open file aimed at the other's position: White down the d-file, Black down the c-file. Sharp, asymmetrical, and decided by who attacks faster.",
+    "owner_plans": [
+      "Castle queenside and storm the kingside with f3, g4 and h4 while Black is slower.",
+      "Use the half-open d-file to press against the backward d6 pawn.",
+      "Fight for the d5 square: a knight or bishop landing there is often decisive.",
+      "Consider the Bg5 and f4 setup to provoke weaknesses before Black is ready."
+    ],
+    "opponent_plans": [
+      "Attack down the half-open c-file, doubling rooks and aiming at c3 and c2.",
+      "Play ...b5-b4 to drive the c3 knight away and win the fight for d5.",
+      "Prepare the ...d5 break, which frees the position in one move if it works.",
+      "Do not defend passively: this structure rewards counterattack, not caution."
+    ],
+    "good_pieces": [
+      "Any knight that reaches d5 for White, or c4 for Black.",
+      "The dark-squared bishops, which point straight at the opposing king."
+    ],
+    "bad_pieces": [
+      "Black's d6 pawn is the standing weakness and whatever must defend it.",
+      "A white knight on d4 that has run out of squares once ...b5-b4 lands."
+    ],
+    "typical_mistakes": [
+      "Playing slowly on either side: this is a race, and a tempo is worth more than a pawn.",
+      "As Black, grabbing the b2 pawn with the queen and losing the thread of development.",
+      "As White, opening the position while the king is still in the centre."
+    ],
+    "traps": [
+      "The queenside pawn storm can rebound badly if the c-file opens before White's king finds shelter.",
+      "Watch the e6 and d5 squares: a sacrifice on either is the standard way this structure explodes."
+    ]
+  },
+
+  "Small centre": {
+    "summary": "A modest, flexible pawn centre on d6 and e6. Solid and free of weaknesses, but passive if the freeing breaks never come.",
+    "owner_plans": ["Prepare ...d5 or ...b5 at the right moment.", "Complete development before opening the position."],
+    "opponent_plans": ["Take space and prevent the freeing breaks.", "Consider a kingside pawn storm while the centre stays closed."],
+    "good_pieces": ["Knights on d4 and f3 for the space-holder."],
+    "bad_pieces": ["The cramped side's bishops before a break is achieved."],
+    "typical_mistakes": ["Never playing the freeing break and drifting into a passive position."],
+    "traps": []
+  },
+
+  "Open centre": {
+    "summary": "The central pawns are gone. Development, king safety and open files decide everything, and slow moves are punished immediately.",
+    "owner_plans": ["Develop quickly, castle, and seize the open files with the rooks.", "Look for tactics: open positions favour the better-developed side."],
+    "opponent_plans": ["The same. Whoever finishes development first has the advantage."],
+    "good_pieces": ["Rooks on open files; bishops on long diagonals."],
+    "bad_pieces": ["An uncastled king; any undeveloped piece."],
+    "typical_mistakes": ["Making pawn moves instead of developing.", "Leaving the king in the centre."],
+    "traps": []
+  },
+
+  "Symmetrical": {
+    "summary": "Mirrored pawns. The advantage lies in the extra tempo and in who breaks the symmetry on favourable terms.",
+    "owner_plans": ["Improve the worst-placed piece and avoid weakening the structure first."],
+    "opponent_plans": ["Equalise by copying only as long as it is safe, then find an independent plan."],
+    "good_pieces": ["Whichever piece has more squares than its counterpart."],
+    "bad_pieces": ["Any piece worse than its mirror image."],
+    "typical_mistakes": ["Breaking the symmetry without a concrete reason, which usually just creates the first weakness."],
+    "traps": []
+  },
+
+  "Unresolved centre": {
+    "summary": "The central tension has not been resolved. Who releases it, and when, will define the whole middlegame.",
+    "owner_plans": ["Finish development before resolving the tension.", "Keep the option of several structures for as long as possible."],
+    "opponent_plans": ["The same: whoever resolves the tension first usually concedes a small concession."],
+    "good_pieces": ["Flexible pieces not yet committed to one structure."],
+    "bad_pieces": ["Pieces committed to a plan the centre may not deliver."],
+    "typical_mistakes": ["Releasing the central tension to gain a tempo and handing over a better structure."],
+    "traps": []
+  }
+}
